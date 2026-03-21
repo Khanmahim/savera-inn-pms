@@ -1,0 +1,23 @@
+[
+  {
+    "id": 1,
+    "date": "2025-03-10",
+    "category": "Electricity",
+    "desc": "Monthly bill",
+    "amount": 8500
+  },
+  {
+    "id": 2,
+    "date": "2025-03-12",
+    "category": "Laundry",
+    "desc": "Linen washing",
+    "amount": 2000
+  },
+  {
+    "id": 3,
+    "date": "2026-03-31",
+    "category": "Staff Salary",
+    "desc": "",
+    "amount": 50000
+  }
+]

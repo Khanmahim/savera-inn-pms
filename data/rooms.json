@@ -1,0 +1,134 @@
+[
+  {
+    "num": "1",
+    "type": "Suite",
+    "ac": "AC",
+    "price": 2500,
+    "extra_bed": true,
+    "extra_price": 80,
+    "bonfire": true,
+    "bonfire_price": 100,
+    "status": "occupied"
+  },
+  {
+    "num": "2",
+    "type": "Deluxe",
+    "ac": "AC",
+    "price": 2500,
+    "extra_bed": true,
+    "extra_price": 100,
+    "bonfire": true,
+    "bonfire_price": 100,
+    "status": "occupied"
+  },
+  {
+    "num": "3",
+    "type": "Standard",
+    "ac": "AC",
+    "price": 1700,
+    "extra_bed": true,
+    "extra_price": 100,
+    "bonfire": true,
+    "bonfire_price": 100,
+    "status": "occupied"
+  },
+  {
+    "num": "4",
+    "type": "Standard",
+    "ac": "AC",
+    "price": 1700,
+    "extra_bed": true,
+    "extra_price": 100,
+    "bonfire": true,
+    "bonfire_price": 100,
+    "status": "available"
+  },
+  {
+    "num": "5",
+    "type": "Standard",
+    "ac": "AC",
+    "price": 1700,
+    "extra_bed": true,
+    "extra_price": 100,
+    "bonfire": true,
+    "bonfire_price": 100,
+    "status": "available"
+  },
+  {
+    "num": "6",
+    "type": "Standard",
+    "ac": "AC",
+    "price": 1700,
+    "extra_bed": true,
+    "extra_price": 100,
+    "bonfire": true,
+    "bonfire_price": 100,
+    "status": "available"
+  },
+  {
+    "num": "7",
+    "type": "Standard",
+    "ac": "AC",
+    "price": 1700,
+    "extra_bed": true,
+    "extra_price": 100,
+    "bonfire": true,
+    "bonfire_price": 100,
+    "status": "available"
+  },
+  {
+    "num": "8",
+    "type": "Standard",
+    "ac": "AC",
+    "price": 1700,
+    "extra_bed": true,
+    "extra_price": 100,
+    "bonfire": true,
+    "bonfire_price": 100,
+    "status": "available"
+  },
+  {
+    "num": "9",
+    "type": "Standard",
+    "ac": "AC",
+    "price": 1700,
+    "extra_bed": true,
+    "extra_price": 100,
+    "bonfire": true,
+    "bonfire_price": 100,
+    "status": "available"
+  },
+  {
+    "num": "10",
+    "type": "Standard",
+    "ac": "Non-AC",
+    "price": 1500,
+    "extra_bed": true,
+    "extra_price": 100,
+    "bonfire": true,
+    "bonfire_price": 100,
+    "status": "available"
+  },
+  {
+    "num": "11",
+    "type": "Standard",
+    "ac": "Non-AC",
+    "price": 1500,
+    "extra_bed": true,
+    "extra_price": 100,
+    "bonfire": true,
+    "bonfire_price": 100,
+    "status": "available"
+  },
+  {
+    "num": "12",
+    "type": "Standard",
+    "ac": "Non-AC",
+    "price": 1500,
+    "extra_bed": true,
+    "extra_price": 100,
+    "bonfire": true,
+    "bonfire_price": 100,
+    "status": "available"
+  }
+]
