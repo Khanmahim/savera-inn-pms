@@ -61,5 +61,51 @@
     "advance_method": "Cash",
     "notes": "",
     "status": "confirmed"
+  },
+  {
+    "id": 5,
+    "guest": "vidya",
+    "phone": "",
+    "room": "4, 9",
+    "rooms": [
+      "4",
+      "9"
+    ],
+    "agent": "",
+    "checkin": "2026-03-21",
+    "checkout": "2026-03-24",
+    "extra_bed": true,
+    "extra_bed_count": 1,
+    "season": "Peak",
+    "bonfire": true,
+    "meal_plan": "Breakfast Only (CP)",
+    "meal_price": 0,
+    "advance_paid": 1000,
+    "advance_method": "Cash",
+    "notes": "",
+    "status": "confirmed"
+  },
+  {
+    "id": 6,
+    "guest": "vidi",
+    "phone": "",
+    "room": "8, 5",
+    "rooms": [
+      "8",
+      "5"
+    ],
+    "agent": "",
+    "checkin": "2026-03-21",
+    "checkout": "2026-03-24",
+    "extra_bed": true,
+    "extra_bed_count": 2,
+    "season": "Peak",
+    "bonfire": true,
+    "meal_plan": "Breakfast Only (CP)",
+    "meal_price": 100,
+    "advance_paid": 1000,
+    "advance_method": "Cash",
+    "notes": "",
+    "status": "confirmed"
   }
 ]
