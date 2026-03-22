@@ -175,6 +175,97 @@ def seed_data():
 
 seed_data()
 
+# ── Role-based permissions ────────────────────────────────────────────────────
+# Defines what each role CAN do. Admin can do everything always.
+PERMISSIONS = {
+    # Front Desk: view + bookings + billing + payments + CRM only
+    # Cannot delete anything, cannot manage rooms, cannot see financials
+    "staff": {
+        "pages":           ["📊 Dashboard", "📋 Bookings", "📅 Calendar",
+                            "🛏️ Rooms", "₹  Billing", "💳 Payments", "👥 Guests (CRM)"],
+        "add_booking":     True,
+        "edit_booking":    True,
+        "delete_booking":  False,   # 🔒 dangerous
+        "checkout_guest":  True,
+        "add_room":        False,   # 🔒 admin/manager only
+        "edit_room":       False,   # 🔒 admin/manager only
+        "delete_room":     False,   # 🔒 admin only
+        "view_billing":    True,
+        "generate_bill":   True,
+        "mark_paid":       False,   # 🔒 manager/admin only
+        "view_expenses":   False,   # 🔒 hidden from front desk
+        "add_expense":     False,   # 🔒 hidden from front desk
+        "view_reports":    False,   # 🔒 hidden from front desk
+        "view_payments":   True,
+        "add_payment":     True,
+        "add_refund":      False,   # 🔒 manager/admin only
+        "view_crm":        True,
+        "add_crm_note":    True,
+        "import_excel":    True,
+    },
+    # Manager: everything except delete rooms (only admin can permanently delete)
+    "manager": {
+        "pages":           ["📊 Dashboard", "📋 Bookings", "📅 Calendar", "🛏️ Rooms",
+                            "₹  Billing", "💳 Payments", "🧾 Expenses", "📈 Reports", "👥 Guests (CRM)"],
+        "add_booking":     True,
+        "edit_booking":    True,
+        "delete_booking":  True,
+        "checkout_guest":  True,
+        "add_room":        True,
+        "edit_room":       True,
+        "delete_room":     False,   # 🔒 admin only — permanent action
+        "view_billing":    True,
+        "generate_bill":   True,
+        "mark_paid":       True,
+        "view_expenses":   True,
+        "add_expense":     True,
+        "view_reports":    True,
+        "view_payments":   True,
+        "add_payment":     True,
+        "add_refund":      True,
+        "view_crm":        True,
+        "add_crm_note":    True,
+        "import_excel":    True,
+    },
+    "admin": {},  # Admin bypasses all checks — full access
+}
+
+def can(action):
+    """Check if current user has permission for an action. Admin always returns True."""
+    role = st.session_state.get("user_role", "staff")
+    if role == "admin":
+        return True
+    return PERMISSIONS.get(role, {}).get(action, False)
+
+def allowed_pages():
+    """Return list of pages the current user can see in the sidebar."""
+    role = st.session_state.get("user_role", "staff")
+    if role == "admin":
+        return ["📊 Dashboard","🛏️ Rooms","📋 Bookings","📅 Calendar",
+                "₹  Billing","💳 Payments","🧾 Expenses","📈 Reports","👥 Guests (CRM)"]
+    return PERMISSIONS.get(role, {}).get("pages", ["📊 Dashboard"])
+
+def lock(action, message=None):
+    """Show a lock message if user doesn't have permission. Returns True if blocked."""
+    if not can(action):
+        role = st.session_state.get("user_role", "staff")
+        msg  = message or f"🔒 **Access Restricted** — This action requires higher permissions. Please ask the **Admin** or **Manager**."
+        st.markdown(f"""
+        <div style='background:#fef3c7;border:1.5px solid #f59e0b;border-radius:10px;
+                    padding:14px 18px;display:flex;align-items:center;gap:12px;margin:8px 0'>
+            <div style='font-size:28px'>🔒</div>
+            <div>
+                <div style='font-weight:600;color:#92400e;font-size:14px'>Access Restricted</div>
+                <div style='color:#78350f;font-size:13px;margin-top:2px'>
+                    Your role (<b>{role.title()}</b>) does not have permission for this action.<br>
+                    Please ask the <b>Admin</b> or <b>Manager</b> to do this.
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        return True
+    return False
+
 # ── Load all data into session state ─────────────────────────────────────────
 if "rooms"    not in st.session_state: st.session_state.rooms    = load(ROOMS_FILE,    [])
 if "bookings" not in st.session_state: st.session_state.bookings = load(BOOKINGS_FILE, [])
@@ -186,6 +277,7 @@ def persist():
     save(BOOKINGS_FILE, st.session_state.bookings)
     save(BILLS_FILE,    st.session_state.bills)
     save(EXPENSES_FILE, st.session_state.expenses)
+    save(PAYMENTS_FILE, st.session_state.payments)
 
 def nights(cin, cout):
     d1 = datetime.strptime(str(cin), "%Y-%m-%d")
@@ -197,6 +289,77 @@ def get_room(num):
 
 def fmt(n):
     return f"₹{int(n):,}"
+
+# ── Availability engine ───────────────────────────────────────────────────────
+def dates_overlap(cin1, cout1, cin2, cout2):
+    """Check if two date ranges overlap. checkout is exclusive (day of departure)."""
+    return cin1 < cout2 and cin2 < cout1
+
+def get_room_status_on_date(room_num, check_date):
+    """Returns (status, booking) for a room on a given date based on bookings."""
+    for b in st.session_state.bookings:
+        if b.get("status") == "checked-out":
+            continue
+        rooms_list = b.get("rooms", [b.get("room", "")])
+        if not isinstance(rooms_list, list):
+            rooms_list = [rooms_list]
+        if room_num not in rooms_list:
+            continue
+        try:
+            cin  = datetime.strptime(b["checkin"],  "%Y-%m-%d").date()
+            cout = datetime.strptime(b["checkout"], "%Y-%m-%d").date()
+            if cin <= check_date < cout:
+                return "occupied", b
+        except:
+            pass
+    return "available", None
+
+def check_overbooking(room_num, checkin_str, checkout_str, exclude_booking_id=None):
+    """Returns list of conflicting bookings for a room+daterange."""
+    try:
+        cin  = datetime.strptime(checkin_str,  "%Y-%m-%d").date()
+        cout = datetime.strptime(checkout_str, "%Y-%m-%d").date()
+    except:
+        return []
+    conflicts = []
+    for b in st.session_state.bookings:
+        if b.get("status") == "checked-out":
+            continue
+        if exclude_booking_id and b.get("id") == exclude_booking_id:
+            continue
+        rooms_list = b.get("rooms", [b.get("room", "")])
+        if not isinstance(rooms_list, list):
+            rooms_list = [rooms_list]
+        if room_num not in rooms_list:
+            continue
+        try:
+            bcin  = datetime.strptime(b["checkin"],  "%Y-%m-%d").date()
+            bcout = datetime.strptime(b["checkout"], "%Y-%m-%d").date()
+            if dates_overlap(cin, cout, bcin, bcout):
+                conflicts.append(b)
+        except:
+            pass
+    return conflicts
+
+def sync_room_statuses():
+    """Auto-update room statuses based on today's bookings."""
+    today = date.today()
+    for r in st.session_state.rooms:
+        status, _ = get_room_status_on_date(r["num"], today)
+        # Only auto-set occupied/available; preserve "cleaning" if manually set
+        if r.get("status") == "cleaning":
+            continue
+        r["status"] = status
+
+# ── Payments file ─────────────────────────────────────────────────────────────
+PAYMENTS_FILE = DATA_DIR / "payments.json"
+if not PAYMENTS_FILE.exists():
+    save(PAYMENTS_FILE, [])
+if "payments" not in st.session_state:
+    st.session_state.payments = load(PAYMENTS_FILE, [])
+
+# ── Auto-sync room statuses on every page load (must be after all functions) ──
+sync_room_statuses()
 
 # ── Custom CSS ────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -249,15 +412,7 @@ with st.sidebar:
     role_badge = {"admin": "🔴 Admin", "manager": "🟡 Manager", "staff": "🟢 Staff"}.get(st.session_state.user_role, "👤")
     st.markdown(f"**{st.session_state.user_name}** &nbsp; {role_badge}")
     st.markdown("---")
-    page = st.radio("Navigate", [
-        "📊 Dashboard",
-        "🛏️ Rooms",
-        "📋 Bookings",
-        "📅 Calendar",
-        "₹  Billing",
-        "🧾 Expenses",
-        "📈 Reports",
-    ], label_visibility="collapsed")
+    page = st.radio("Navigate", allowed_pages(), label_visibility="collapsed")
     st.markdown("---")
     st.caption(f"📅 {date.today().strftime('%d %b %Y, %A')}")
     if st.button("🚪 Logout", use_container_width=True):
@@ -295,17 +450,91 @@ if page == "📊 Dashboard":
 
     with col1:
         st.subheader("Room Status")
+
+        # ── Date picker ───────────────────────────────────────────────────────
+        selected_date = st.date_input(
+            "📅 Select a date to check room status",
+            value=date.today(),
+            help="Pick any date to see which rooms are occupied or available on that day"
+        )
+
+        today_date = date.today()
+        is_today   = (selected_date == today_date)
+
+        # Label above the room grid
+        if is_today:
+            st.markdown(
+                "<div style='background:#f3eeff;border-left:4px solid #7c3aed;"
+                "padding:8px 12px;border-radius:6px;font-size:13px;margin-bottom:10px'>"
+                "🟣 <b>Today — Live Status</b></div>",
+                unsafe_allow_html=True
+            )
+        else:
+            st.markdown(
+                f"<div style='background:#e0f2fe;border-left:4px solid #0284c7;"
+                f"padding:8px 12px;border-radius:6px;font-size:13px;margin-bottom:10px'>"
+                f"📅 <b>Showing status for {selected_date.strftime('%d %B %Y')}</b></div>",
+                unsafe_allow_html=True
+            )
+
+        # ── Helper: find booking status for a room on a given date ────────────
+        def room_status_on_date(room_num, check_date):
+            for b in bookings:
+                if b.get("status") == "checked-out":
+                    continue
+                rooms_list = b.get("rooms", [b.get("room", "")])
+                if not isinstance(rooms_list, list):
+                    rooms_list = [rooms_list]
+                if room_num not in rooms_list:
+                    continue
+                try:
+                    cin  = datetime.strptime(b["checkin"],  "%Y-%m-%d").date()
+                    cout = datetime.strptime(b["checkout"], "%Y-%m-%d").date()
+                    if cin <= check_date < cout:
+                        return "occupied", b.get("guest", "Guest")
+                except:
+                    pass
+            return None, None
+
+        # ── Room grid ─────────────────────────────────────────────────────────
         cols = st.columns(3)
         for i, r in enumerate(rooms):
-            color = {"occupied": "#f8d7da", "available": "#d4edda", "cleaning": "#fff3cd"}.get(r["status"], "#eee")
-            icon  = {"occupied": "🔴", "available": "🟢", "cleaning": "🟡"}.get(r["status"], "⚪")
+            if is_today:
+                status = r["status"]
+                _, g   = room_status_on_date(r["num"], selected_date)
+                guest  = g or ""
+            else:
+                bk_status, guest = room_status_on_date(r["num"], selected_date)
+                status = bk_status if bk_status else "available"
+                guest  = guest or ""
+
+            color = {"occupied":"#f8d7da","available":"#d4edda","cleaning":"#fff3cd"}.get(status,"#eee")
+            icon  = {"occupied":"🔴","available":"🟢","cleaning":"🟡"}.get(status,"⚪")
+            guest_line = (
+                f"<div style='font-size:11px;color:#666;margin-top:3px;"
+                f"white-space:nowrap;overflow:hidden;text-overflow:ellipsis'>{guest}</div>"
+                if guest else ""
+            )
             with cols[i % 3]:
                 st.markdown(f"""
-                <div style="background:{color};border-radius:8px;padding:10px;text-align:center;margin-bottom:8px">
-                  <div style="font-size:20px;font-weight:700">{r['num']}</div>
-                  <div style="font-size:12px;color:#555">{r['type']} · {r['ac']}</div>
-                  <div style="font-size:12px;margin-top:4px">{icon} {r['status']}</div>
+                <div style="background:{color};border-radius:8px;padding:10px;
+                            text-align:center;margin-bottom:8px;
+                            border:1px solid rgba(0,0,0,0.06)">
+                  <div style="font-size:20px;font-weight:700;color:#1a1a1a">{r['num']}</div>
+                  <div style="font-size:11px;color:#666">{r['type']} · {r['ac']}</div>
+                  <div style="font-size:12px;margin-top:4px">{icon} {status}</div>
+                  {guest_line}
                 </div>""", unsafe_allow_html=True)
+
+        # ── Summary bar ───────────────────────────────────────────────────────
+        occ_d   = sum(1 for r in rooms if room_status_on_date(r["num"], selected_date)[0] == "occupied")
+        avail_d = len(rooms) - occ_d
+        st.markdown(
+            f"<div style='background:#f3eeff;border-radius:8px;padding:10px 14px;"
+            f"margin-top:6px;font-size:13px;display:flex;gap:16px'>"
+            f"🔴 <b>{occ_d} Occupied</b> &nbsp;&nbsp; 🟢 <b>{avail_d} Available</b>"
+            f"</div>", unsafe_allow_html=True
+        )
 
     with col2:
         st.subheader("Recent Bookings")
@@ -322,7 +551,10 @@ if page == "📊 Dashboard":
 elif page == "🛏️ Rooms":
     st.title("🛏️ Room Management")
 
-    tab1, tab2 = st.tabs(["All Rooms", "➕ Add Room"])
+    room_tabs = ["All Rooms", "➕ Add Room"] if can("add_room") else ["All Rooms"]
+    tab_results = st.tabs(room_tabs)
+    tab1 = tab_results[0]
+    tab2 = tab_results[1] if can("add_room") else None
 
     with tab1:
         rooms = st.session_state.rooms
@@ -340,17 +572,20 @@ elif page == "🛏️ Rooms":
                 c6.markdown(f"<span style='background:{color};padding:2px 10px;border-radius:12px;font-size:12px'>{r['status']}</span> {'🔥' if r.get('bonfire') else ''}", unsafe_allow_html=True)
                 with c7:
                     sc1, sc2, sc3 = st.columns(3)
-                    statuses = ["available", "occupied", "cleaning"]
-                    cur_idx  = statuses.index(r["status"]) if r["status"] in statuses else 0
-                    new_stat = statuses[(cur_idx + 1) % 3]
-                    if sc1.button("🔄", key=f"tog_{r['num']}", help=f"Set to {new_stat}"):
-                        r["status"] = new_stat
-                        persist()
-                        st.rerun()
-                    if sc2.button("✏️", key=f"edit_r_{r['num']}", help="Edit room"):
+                    # Only allow toggling available <-> cleaning manually
+                    # "occupied" is set automatically by the availability engine
+                    if r["status"] == "occupied":
+                        sc1.markdown("<div style='font-size:11px;color:#aaa;padding:4px'>Auto-set</div>", unsafe_allow_html=True)
+                    else:
+                        next_manual = "cleaning" if r["status"] == "available" else "available"
+                        if sc1.button("🔄", key=f"tog_{r['num']}", help=f"Set to {next_manual}"):
+                            r["status"] = next_manual
+                            persist()
+                            st.rerun()
+                    if can("edit_room") and sc2.button("✏️", key=f"edit_r_{r['num']}", help="Edit room"):
                         st.session_state["edit_room"] = r["num"]
                         st.rerun()
-                    if sc3.button("🗑️", key=f"del_{r['num']}"):
+                    if can("delete_room") and sc3.button("🗑️", key=f"del_{r['num']}"):
                         st.session_state.rooms = [x for x in st.session_state.rooms if x["num"] != r["num"]]
                         persist()
                         st.rerun()
@@ -397,7 +632,8 @@ elif page == "🛏️ Rooms":
                             st.rerun()
                 st.markdown("---")
 
-    with tab2:
+    if tab2 is not None:
+     with tab2:
         st.subheader("Add New Room")
         with st.form("add_room_form"):
             c1, c2 = st.columns(2)
@@ -440,7 +676,7 @@ elif page == "🛏️ Rooms":
 elif page == "📋 Bookings":
     st.title("📋 Bookings")
 
-    tab1, tab2 = st.tabs(["All Bookings", "➕ New Booking"])
+    tab1, tab2, tab3 = st.tabs(["All Bookings", "➕ New Booking", "📤 Import from Excel"])
 
     with tab1:
         bookings = st.session_state.bookings
@@ -491,7 +727,7 @@ elif page == "📋 Bookings":
                 c7.write(fmt(total))
                 with c8:
                     a1, a2 = st.columns(2)
-                    if b["status"] == "checked-in":
+                    if b["status"] == "checked-in" and can("checkout_guest"):
                         if a1.button("✅ Out", key=f"co_{b['id']}", help="Checkout"):
                             b["status"] = "checked-out"
                             room = get_room(b["room"])
@@ -499,7 +735,7 @@ elif page == "📋 Bookings":
                                 room["status"] = "cleaning"
                             persist()
                             st.rerun()
-                    if a2.button("🗑️", key=f"db_{b['id']}", help="Delete"):
+                    if can("delete_booking") and a2.button("🗑️", key=f"db_{b['id']}", help="Delete"):
                         st.session_state.bookings = [x for x in st.session_state.bookings if x["id"] != b["id"]]
                         persist()
                         st.rerun()
@@ -642,35 +878,213 @@ elif page == "📋 Bookings":
                     elif checkout <= checkin:
                         st.error("Check-out must be after check-in.")
                     else:
-                        rnums  = [r.split("–")[0].strip() for r in rooms_selected]
-                        new_id = max((b["id"] for b in st.session_state.bookings), default=0) + 1
-                        st.session_state.bookings.append({
-                            "id": new_id, "guest": guest, "phone": phone,
-                            "room": ", ".join(rnums),
-                            "rooms": rnums,
-                            "agent": agent,
-                            "checkin": str(checkin), "checkout": str(checkout),
-                            "extra_bed": extra_bed,
-                            "extra_bed_count": int(extra_bed_count) if extra_bed and extra_bed_count != "0 (None)" else 0,
-                            "season": season,
-                            "bonfire": bonfire_requested,
-                            "meal_plan": meal_plan,
-                            "meal_price": meal_price,
-                            "advance_paid": advance_paid,
-                            "advance_method": advance_method,
-                            "notes": notes, "status": "confirmed"
-                        })
+                        rnums = [r.split("–")[0].strip() for r in rooms_selected]
+                        # ── Overbooking check ─────────────────────────────────
+                        conflicts = []
                         for rnum in rnums:
-                            room = get_room(rnum)
-                            if room: room["status"] = "occupied"
+                            clashes = check_overbooking(rnum, str(checkin), str(checkout))
+                            for c in clashes:
+                                conflicts.append(f"Room {rnum} is already booked by **{c['guest']}** ({c['checkin']} → {c['checkout']})")
+                        if conflicts:
+                            st.error("🚫 **Overbooking Conflict!** Cannot confirm booking:")
+                            for cf in conflicts:
+                                st.warning(cf)
+                        else:
+                            new_id = max((b["id"] for b in st.session_state.bookings), default=0) + 1
+                            st.session_state.bookings.append({
+                                "id": new_id, "guest": guest, "phone": phone,
+                                "room": ", ".join(rnums),
+                                "rooms": rnums,
+                                "agent": agent,
+                                "checkin": str(checkin), "checkout": str(checkout),
+                                "extra_bed": extra_bed,
+                                "extra_bed_count": int(extra_bed_count) if extra_bed and extra_bed_count != "0 (None)" else 0,
+                                "season": season,
+                                "bonfire": bonfire_requested,
+                                "meal_plan": meal_plan,
+                                "meal_price": meal_price,
+                                "advance_paid": advance_paid,
+                                "advance_method": advance_method,
+                                "notes": notes, "status": "confirmed",
+                                "payment_status": "partial" if advance_paid > 0 else "unpaid",
+                            })
+                            # Record advance payment in payment log
+                            if advance_paid > 0:
+                                st.session_state.payments.append({
+                                    "id": len(st.session_state.payments) + 1,
+                                    "booking_id": new_id,
+                                    "guest": guest,
+                                    "room": ", ".join(rnums),
+                                    "amount": advance_paid,
+                                    "method": advance_method,
+                                    "type": "advance",
+                                    "date": str(date.today()),
+                                    "note": "Advance at booking",
+                                })
+                            sync_room_statuses()
+                            persist()
+                            msg = f"✅ Booking confirmed for **{guest}** — Room(s) {', '.join(rnums)} | {checkin} → {checkout}"
+                            if extra_bed and extra_bed_count != "0 (None)": msg += f" | 🛏️ {extra_bed_count} Extra Bed(s)"
+                            if bonfire_requested: msg += " | 🔥 Bonfire"
+                            if meal_plan != "No Meals (Room Only)": msg += f" | 🍽️ {meal_plan.split('(')[0].strip()}"
+                            if advance_paid > 0:  msg += f" | 💳 Advance: Rs.{advance_paid:,} ({advance_method})"
+                            st.success(msg)
+                            st.rerun()
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # TAB 3: IMPORT FROM EXCEL
+    # ═══════════════════════════════════════════════════════════════════════════
+    with tab3:
+        st.subheader("📤 Import Bookings from Excel")
+        st.markdown("""
+        Upload your booking calendar Excel file and all bookings will be automatically
+        imported into the app — no manual data entry needed!
+
+        **Expected format:** Date in column A, Room numbers in row 2 (cols B onwards),
+        agent/booking name in each cell. This matches your existing booking calendar format.
+        """)
+
+        uploaded_file = st.file_uploader("Choose your Excel file", type=["xlsx","xls"])
+
+        if uploaded_file:
+            try:
+                import pandas as pd
+                df = pd.read_excel(uploaded_file, header=None)
+
+                # Parse room numbers from row index 1
+                room_cols = {}
+                for col_idx in range(1, df.shape[1]):
+                    val = df.iloc[1, col_idx]
+                    if pd.notna(val):
+                        try:
+                            room_cols[col_idx] = str(int(float(val)))
+                        except:
+                            pass
+
+                if not room_cols:
+                    st.error("Could not find room numbers in row 2. Please check your file format.")
+                else:
+                    st.success(f"✅ Found {len(room_cols)} rooms: {', '.join(room_cols.values())}")
+
+                    # Parse bookings — group consecutive days per agent+room
+                    raw = {}  # (agent, room) -> list of dates
+                    for row_idx in range(2, len(df)):
+                        row = df.iloc[row_idx]
+                        date_val = row[0]
+                        if pd.isna(date_val):
+                            continue
+                        try:
+                            d = pd.to_datetime(date_val).date()
+                        except:
+                            continue
+                        for col_idx, room in room_cols.items():
+                            cell = row[col_idx]
+                            if pd.notna(cell) and str(cell).strip() and str(cell).strip().lower() != "nan":
+                                agent = str(cell).strip()
+                                key = (agent, room)
+                                if key not in raw:
+                                    raw[key] = []
+                                raw[key].append(d)
+
+                    # Convert to bookings with checkin/checkout
+                    preview_bookings = []
+                    for (agent, room), dates in raw.items():
+                        if not dates:
+                            continue
+                        dates_sorted = sorted(set(dates))
+                        # Group consecutive dates into single booking
+                        groups = []
+                        start = dates_sorted[0]
+                        prev  = dates_sorted[0]
+                        for d in dates_sorted[1:]:
+                            from datetime import timedelta
+                            if (d - prev).days <= 1:
+                                prev = d
+                            else:
+                                groups.append((start, prev))
+                                start = d
+                                prev  = d
+                        groups.append((start, prev))
+
+                        for cin, cout in groups:
+                            from datetime import timedelta
+                            preview_bookings.append({
+                                "guest":    agent,
+                                "agent":    agent,
+                                "room":     room,
+                                "rooms":    [room],
+                                "checkin":  str(cin),
+                                "checkout": str(cout + timedelta(days=1)),
+                                "status":   "confirmed",
+                                "phone":    "",
+                                "season":   "Peak",
+                                "extra_bed": False,
+                                "extra_bed_count": 0,
+                                "bonfire":  False,
+                                "meal_plan": "No Meals (Room Only)",
+                                "meal_price": 0,
+                                "advance_paid": 0,
+                                "advance_method": "Cash",
+                                "notes":    "Imported from Excel",
+                            })
+
+                    st.markdown(f"**📋 Preview — {len(preview_bookings)} bookings found:**")
+
+                    # Show preview table
+                    prev_df = pd.DataFrame([{
+                        "Guest/Agent": b["guest"],
+                        "Room": b["room"],
+                        "Check-in": b["checkin"],
+                        "Check-out": b["checkout"],
+                    } for b in preview_bookings])
+                    st.dataframe(prev_df, use_container_width=True, hide_index=True)
+
+                    # Import options
+                    st.markdown("---")
+                    col_a, col_b = st.columns(2)
+                    skip_existing = col_a.checkbox("Skip duplicates (same guest + room + date)", value=True)
+
+                    if col_b.button("✅ Import All Bookings", type="primary", use_container_width=True):
+                        imported = 0
+                        skipped  = 0
+                        next_id  = max((b["id"] for b in st.session_state.bookings), default=0) + 1
+
+                        for pb in preview_bookings:
+                            # Check for duplicates
+                            is_dup = any(
+                                x["guest"] == pb["guest"] and
+                                x["room"]  == pb["room"]  and
+                                x["checkin"] == pb["checkin"]
+                                for x in st.session_state.bookings
+                            )
+                            if skip_existing and is_dup:
+                                skipped += 1
+                                continue
+
+                            pb["id"] = next_id
+                            next_id += 1
+                            st.session_state.bookings.append(pb)
+
+                            # Mark room as occupied if checkin is today or past
+                            from datetime import date as date_cls
+                            try:
+                                cin = date_cls.fromisoformat(pb["checkin"])
+                                cout = date_cls.fromisoformat(pb["checkout"])
+                                if cin <= date_cls.today() <= cout:
+                                    room_obj = get_room(pb["room"])
+                                    if room_obj: room_obj["status"] = "occupied"
+                            except:
+                                pass
+                            imported += 1
+
                         persist()
-                        msg = f"✅ Booking confirmed for **{guest}** — Room(s) {', '.join(rnums)} | {checkin} → {checkout}"
-                        if extra_bed and extra_bed_count != "0 (None)": msg += f" | 🛏️ {extra_bed_count} Extra Bed(s)"
-                        if bonfire_requested: msg += " | 🔥 Bonfire"
-                        if meal_plan != "No Meals (Room Only)": msg += f" | 🍽️ {meal_plan.split('(')[0].strip()}"
-                        if advance_paid > 0:  msg += f" | 💳 Advance: Rs.{advance_paid:,} ({advance_method})"
-                        st.success(msg)
+                        st.success(f"🎉 Imported **{imported}** bookings! Skipped **{skipped}** duplicates.")
+                        st.balloons()
                         st.rerun()
+
+            except Exception as e:
+                st.error(f"Error reading file: {e}")
+                st.caption("Make sure your Excel file matches the expected format.")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PAGE: BILLING
@@ -806,7 +1220,7 @@ elif page == "₹  Billing":
                     c3c.metric("Balance Due",  fmt(b.get("total", gross)))
                     c4c.metric("Status",       b["status"])
                     btn1, btn2, _ = st.columns([2, 2, 4])
-                    if b["status"] != "Paid":
+                    if b["status"] != "Paid" and can("mark_paid"):
                         if btn1.button("✅ Mark as Paid", key=f"pay_{b['bill_id']}"):
                             b["status"] = "Paid"
                             persist()
@@ -821,7 +1235,10 @@ elif page == "₹  Billing":
                     )
 
     with tab2:
-        st.subheader("Generate New Bill")
+        if not can("generate_bill"):
+            lock("generate_bill")
+        else:
+         st.subheader("Generate New Bill")
         active_bookings = [b for b in st.session_state.bookings if b["status"] in ["checked-in", "confirmed", "checked-out"]]
         if not active_bookings:
             st.warning("No bookings available for billing.")
@@ -926,7 +1343,10 @@ elif page == "🧾 Expenses":
             st.markdown(f"**Total Expenses: {fmt(total_exp)}**")
 
     with tab2:
-        st.subheader("Add Expense")
+        if not can("add_expense"):
+            lock("add_expense")
+        else:
+         st.subheader("Add Expense")
         with st.form("add_expense_form"):
             c1, c2 = st.columns(2)
             category = c1.selectbox("Category", ["Electricity", "Laundry", "Food & Beverages", "Maintenance", "Staff Salary", "Marketing", "Other"])
@@ -949,6 +1369,176 @@ elif page == "🧾 Expenses":
                     st.rerun()
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# PAGE: PAYMENTS
+# ═══════════════════════════════════════════════════════════════════════════════
+elif page == "💳 Payments":
+    st.title("💳 Payment Tracking")
+
+    payments = st.session_state.payments
+    bookings = st.session_state.bookings
+    bills    = st.session_state.bills
+
+    # ── Summary metrics ───────────────────────────────────────────────────────
+    total_received = sum(p["amount"] for p in payments if p.get("type") != "refund")
+    total_refunded = sum(p["amount"] for p in payments if p.get("type") == "refund")
+    total_pending  = sum(
+        b.get("total", 0) - sum(p["amount"] for p in payments
+                                if p.get("booking_id") == b.get("booking_id") and p.get("type") != "refund")
+        for b in bills if b.get("status") != "Paid"
+    )
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("💰 Total Received",  fmt(total_received))
+    c2.metric("🔴 Total Refunded",  fmt(total_refunded))
+    c3.metric("⏳ Pending Bills",   sum(1 for b in bills if b.get("status") != "Paid"))
+    c4.metric("📋 Transactions",    len(payments))
+
+    st.markdown("---")
+
+    tab1, tab2, tab3 = st.tabs(["📋 Transaction Log", "➕ Add Payment", "💸 Refund"])
+
+    with tab1:
+        if not payments:
+            st.info("No payments recorded yet.")
+        else:
+            # Search
+            search_p = st.text_input("🔍 Search by guest name", placeholder="Type name...")
+            filtered_p = [p for p in payments if not search_p or search_p.lower() in p.get("guest","").lower()]
+
+            # Headers
+            h1,h2,h3,h4,h5,h6,h7 = st.columns([0.8,2,1,1.5,1.5,1.5,1.5])
+            h1.markdown("**#**")
+            h2.markdown("**Guest**")
+            h3.markdown("**Room**")
+            h4.markdown("**Amount**")
+            h5.markdown("**Method**")
+            h6.markdown("**Type**")
+            h7.markdown("**Date**")
+            st.markdown("<hr style='margin:2px 0 6px;border-color:#d8b4fe'>", unsafe_allow_html=True)
+
+            for p in reversed(filtered_p):
+                c1,c2,c3,c4,c5,c6,c7 = st.columns([0.8,2,1,1.5,1.5,1.5,1.5])
+                type_color = {"advance":"🔵","final":"🟢","partial":"🟡","refund":"🔴"}.get(p.get("type",""), "⚪")
+                c1.write(str(p.get("id","")))
+                c2.write(f"**{p.get('guest','')}**")
+                c3.write(p.get("room","—"))
+                amount_str = f"- {fmt(p['amount'])}" if p.get("type") == "refund" else fmt(p["amount"])
+                c4.write(amount_str)
+                c5.write(p.get("method","—"))
+                c6.write(f"{type_color} {p.get('type','—').title()}")
+                c7.write(p.get("date","—"))
+                if p.get("note"):
+                    st.caption(f"   📝 {p['note']}")
+                st.markdown("<hr style='margin:2px 0;border-color:#f0e6ff'>", unsafe_allow_html=True)
+
+    with tab2:
+        st.subheader("Add Payment")
+        # Build booking options from bills
+        bill_opts = [f"{b['guest']} — Room {b['room']} | Bill {b['bill_id']} | Due: {fmt(b.get('total',0))}"
+                     for b in bills]
+        if not bill_opts:
+            st.info("No bills generated yet. Generate a bill first.")
+        else:
+            with st.form("add_payment_form"):
+                sel_bill = st.selectbox("Select Bill", bill_opts)
+                bill_obj = bills[bill_opts.index(sel_bill)]
+
+                already_paid = sum(p["amount"] for p in payments
+                                   if p.get("bill_id") == bill_obj.get("bill_id") and p.get("type") != "refund")
+                balance_due  = max(0, bill_obj.get("total", 0) - already_paid)
+
+                st.markdown(f"**Bill Total:** {fmt(bill_obj.get('total',0))} &nbsp;|&nbsp; "
+                            f"**Already Paid:** {fmt(already_paid)} &nbsp;|&nbsp; "
+                            f"**Balance Due:** {fmt(balance_due)}")
+
+                pa1, pa2 = st.columns(2)
+                pay_amount = pa1.number_input("Payment Amount (₹)", min_value=0,
+                                              value=int(balance_due), step=100)
+                pay_method = pa2.selectbox("Payment Method",
+                                           ["Cash","UPI","Bank Transfer","Card","Online"])
+                pa3, pa4 = st.columns(2)
+                pay_type = pa3.selectbox("Payment Type",
+                                         ["final","partial","advance"])
+                pay_date = pa4.date_input("Date", value=date.today())
+                pay_note = st.text_input("Note (optional)", placeholder="e.g. Final settlement")
+                submitted = st.form_submit_button("💳 Record Payment", use_container_width=True)
+                if submitted:
+                    if pay_amount <= 0:
+                        st.error("Enter a valid amount.")
+                    else:
+                        new_pay_id = len(st.session_state.payments) + 1
+                        st.session_state.payments.append({
+                            "id":         new_pay_id,
+                            "booking_id": None,
+                            "bill_id":    bill_obj.get("bill_id"),
+                            "guest":      bill_obj["guest"],
+                            "room":       bill_obj["room"],
+                            "amount":     pay_amount,
+                            "method":     pay_method,
+                            "type":       pay_type,
+                            "date":       str(pay_date),
+                            "note":       pay_note,
+                        })
+                        # Update bill status if fully paid
+                        new_total_paid = already_paid + pay_amount
+                        if new_total_paid >= bill_obj.get("total", 0):
+                            bill_obj["status"] = "Paid"
+                        persist()
+                        st.success(f"✅ Payment of {fmt(pay_amount)} recorded via {pay_method}!")
+                        st.rerun()
+
+    with tab3:
+        if not can("add_refund"):
+            lock("add_refund")
+        else:
+         st.subheader("Issue Refund")
+        guest_bookings = [b for b in bookings if b.get("status") != "checked-out"]
+        if not guest_bookings:
+            st.info("No active bookings to refund.")
+        else:
+            with st.form("refund_form"):
+                ref_opts = [f"{b['guest']} — Room {b['room']} | {b['checkin']} → {b['checkout']}"
+                            for b in guest_bookings]
+                sel_ref  = st.selectbox("Select Booking", ref_opts)
+                bk_obj   = guest_bookings[ref_opts.index(sel_ref)]
+
+                paid_so_far = sum(p["amount"] for p in payments
+                                  if p.get("guest") == bk_obj["guest"] and
+                                  p.get("room")  == bk_obj.get("room","") and
+                                  p.get("type")  != "refund")
+                st.markdown(f"**Total Paid So Far:** {fmt(paid_so_far)}")
+
+                rf1, rf2 = st.columns(2)
+                ref_amount = rf1.number_input("Refund Amount (₹)", min_value=0,
+                                              value=int(paid_so_far), step=100)
+                ref_method = rf2.selectbox("Refund Via",
+                                           ["Cash","UPI","Bank Transfer","Card","Online"])
+                rf3, rf4 = st.columns(2)
+                ref_date   = rf3.date_input("Refund Date", value=date.today())
+                ref_reason = rf4.text_input("Reason", placeholder="e.g. Cancellation")
+                submitted  = st.form_submit_button("💸 Issue Refund", use_container_width=True)
+                if submitted:
+                    if ref_amount <= 0:
+                        st.error("Enter a valid amount.")
+                    elif ref_amount > paid_so_far:
+                        st.error(f"Refund cannot exceed amount paid ({fmt(paid_so_far)}).")
+                    else:
+                        st.session_state.payments.append({
+                            "id":         len(st.session_state.payments) + 1,
+                            "booking_id": bk_obj.get("id"),
+                            "bill_id":    None,
+                            "guest":      bk_obj["guest"],
+                            "room":       bk_obj.get("room",""),
+                            "amount":     ref_amount,
+                            "method":     ref_method,
+                            "type":       "refund",
+                            "date":       str(ref_date),
+                            "note":       ref_reason,
+                        })
+                        persist()
+                        st.success(f"✅ Refund of {fmt(ref_amount)} issued to {bk_obj['guest']}!")
+                        st.rerun()
+
 # PAGE: REPORTS
 # ═══════════════════════════════════════════════════════════════════════════════
 elif page == "📈 Reports":
@@ -1192,3 +1782,281 @@ elif page == "📅 Calendar":
         """, unsafe_allow_html=True)
     else:
         st.info("No rooms added yet.")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAGE: GUESTS CRM
+# ═══════════════════════════════════════════════════════════════════════════════
+elif page == "👥 Guests (CRM)":
+    st.title("👥 Guest CRM")
+
+    bookings = st.session_state.bookings
+    bills    = st.session_state.bills
+    payments = st.session_state.payments
+
+    # ── Build guest profiles from bookings ────────────────────────────────────
+    guest_map = {}
+    for b in bookings:
+        name = b["guest"].strip()
+        if name not in guest_map:
+            guest_map[name] = {
+                "name":          name,
+                "phone":         b.get("phone", ""),
+                "bookings":      [],
+                "total_nights":  0,
+                "total_spend":   0,
+                "rooms_stayed":  set(),
+                "agents":        set(),
+                "meal_plans":    set(),
+                "last_stay":     "",
+                "first_stay":    "",
+                "notes_all":     [],
+            }
+        g = guest_map[name]
+        g["bookings"].append(b)
+        n = nights(b["checkin"], b["checkout"])
+        g["total_nights"] += n
+
+        # Collect rooms
+        rlist = b.get("rooms", [b.get("room", "")])
+        if not isinstance(rlist, list): rlist = [rlist]
+        for rn in rlist:
+            g["rooms_stayed"].add(rn)
+
+        # Agent
+        if b.get("agent"):
+            g["agents"].add(b["agent"])
+
+        # Meal plan
+        mp = b.get("meal_plan", "")
+        if mp and mp != "No Meals (Room Only)":
+            g["meal_plans"].add(mp.split("(")[0].strip())
+
+        # Notes
+        if b.get("notes"):
+            g["notes_all"].append(b["notes"])
+
+        # Dates
+        if not g["first_stay"] or b["checkin"] < g["first_stay"]:
+            g["first_stay"] = b["checkin"]
+        if not g["last_stay"] or b["checkout"] > g["last_stay"]:
+            g["last_stay"] = b["checkout"]
+
+        # Spend from bills
+        bill = next((bl for bl in bills if bl["guest"] == name and bl["room"] == b.get("room","")), None)
+        if bill:
+            g["total_spend"] += bill.get("total", bill.get("gross", 0))
+
+    # Convert sets to lists for display
+    for g in guest_map.values():
+        g["rooms_stayed"] = sorted(g["rooms_stayed"])
+        g["agents"]       = list(g["agents"])
+        g["meal_plans"]   = list(g["meal_plans"])
+
+    guests = list(guest_map.values())
+
+    # ── Guest tier classification ─────────────────────────────────────────────
+    def guest_tier(g):
+        visits = len(g["bookings"])
+        if visits >= 5:   return "🥇 VIP",     "#fef3c7", "#92400e"
+        elif visits >= 3: return "🥈 Regular",  "#ede9fe", "#5b21b6"
+        elif visits >= 2: return "🥉 Returning", "#dbeafe", "#1e40af"
+        else:             return "🆕 New",       "#f0fdf4", "#166534"
+
+    # ── Summary metrics ───────────────────────────────────────────────────────
+    total_guests  = len(guests)
+    repeat_guests = sum(1 for g in guests if len(g["bookings"]) > 1)
+    vip_guests    = sum(1 for g in guests if len(g["bookings"]) >= 5)
+    avg_nights    = round(sum(g["total_nights"] for g in guests) / max(total_guests, 1), 1)
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("👥 Total Guests",    total_guests)
+    c2.metric("🔄 Repeat Guests",   repeat_guests)
+    c3.metric("🥇 VIP Guests",      vip_guests)
+    c4.metric("🌙 Avg Nights/Stay", avg_nights)
+
+    st.markdown("---")
+
+    tab1, tab2, tab3 = st.tabs(["👥 Guest Profiles", "➕ Add Guest Note", "📊 Guest Analytics"])
+
+    # ── TAB 1: Guest Profiles ─────────────────────────────────────────────────
+    with tab1:
+        col_s, col_f = st.columns([2, 1])
+        search_g  = col_s.text_input("🔍 Search guest", placeholder="Type name or phone...")
+        tier_filter = col_f.selectbox("Filter by tier", ["All", "🥇 VIP", "🥈 Regular", "🥉 Returning", "🆕 New"])
+
+        filtered_g = [g for g in guests
+                      if (not search_g or
+                          search_g.lower() in g["name"].lower() or
+                          search_g in g.get("phone",""))
+                      and (tier_filter == "All" or guest_tier(g)[0] == tier_filter)]
+
+        # Sort by number of visits desc
+        filtered_g.sort(key=lambda g: len(g["bookings"]), reverse=True)
+
+        if not filtered_g:
+            st.info("No guests found.")
+        else:
+            for g in filtered_g:
+                tier_label, tier_bg, tier_text = guest_tier(g)
+                visits = len(g["bookings"])
+                with st.expander(
+                    f"{tier_label} **{g['name']}**  |  "
+                    f"{visits} stay{'s' if visits>1 else ''}  |  "
+                    f"{g['total_nights']} nights  |  "
+                    f"Last: {g['last_stay'][:10] if g['last_stay'] else '—'}"
+                ):
+                    col1, col2, col3 = st.columns(3)
+
+                    # ── Contact & identity ────────────────────────────────────
+                    col1.markdown("**📞 Contact**")
+                    col1.write(f"Phone: {g['phone'] or '—'}")
+                    col1.markdown(f"<span style='background:{tier_bg};color:{tier_text};"
+                                  f"padding:3px 10px;border-radius:12px;font-size:12px;"
+                                  f"font-weight:600'>{tier_label}</span>",
+                                  unsafe_allow_html=True)
+                    col1.markdown("**📅 Stay History**")
+                    col1.write(f"First stay: {g['first_stay'][:10] if g['first_stay'] else '—'}")
+                    col1.write(f"Last stay:  {g['last_stay'][:10]  if g['last_stay']  else '—'}")
+                    col1.write(f"Total stays: {visits}")
+                    col1.write(f"Total nights: {g['total_nights']}")
+
+                    # ── Preferences ───────────────────────────────────────────
+                    col2.markdown("**🛏️ Room Preferences**")
+                    col2.write(f"Rooms stayed: {', '.join(g['rooms_stayed']) or '—'}")
+                    col2.markdown("**🍽️ Meal Preferences**")
+                    col2.write(', '.join(g['meal_plans']) if g['meal_plans'] else 'No preference recorded')
+                    col2.markdown("**🏢 Travel Agents**")
+                    col2.write(', '.join(g['agents']) if g['agents'] else 'Direct booking')
+
+                    # ── Spend & notes ─────────────────────────────────────────
+                    col3.markdown("**💰 Spend**")
+                    col3.write(f"Total spend: {fmt(g['total_spend']) if g['total_spend'] else '—'}")
+                    if g["total_nights"] and g["total_spend"]:
+                        col3.write(f"Avg per night: {fmt(g['total_spend'] // g['total_nights'])}")
+
+                    # All past notes
+                    if g["notes_all"]:
+                        col3.markdown("**📝 Past Notes**")
+                        for note in g["notes_all"]:
+                            col3.caption(f"• {note}")
+
+                    # CRM notes stored separately
+                    crm_notes = [p for p in payments
+                                 if p.get("type") == "crm_note" and p.get("guest") == g["name"]]
+                    if crm_notes:
+                        col3.markdown("**🗒️ CRM Notes**")
+                        for cn in crm_notes:
+                            col3.info(f"📌 {cn.get('note','')}  \n*{cn.get('date','')}*")
+
+                    # ── Booking history table ─────────────────────────────────
+                    st.markdown("**📋 All Bookings**")
+                    hist_rows = []
+                    for bk in sorted(g["bookings"], key=lambda x: x["checkin"], reverse=True):
+                        n_nights = nights(bk["checkin"], bk["checkout"])
+                        hist_rows.append({
+                            "Check-in":  bk["checkin"],
+                            "Check-out": bk["checkout"],
+                            "Nights":    n_nights,
+                            "Room(s)":   bk.get("room","—"),
+                            "Agent":     bk.get("agent","Direct") or "Direct",
+                            "Meal":      bk.get("meal_plan","—").split("(")[0].strip(),
+                            "Status":    bk["status"],
+                        })
+                    st.dataframe(pd.DataFrame(hist_rows),
+                                 use_container_width=True, hide_index=True)
+
+                    # ── Upsell suggestions ────────────────────────────────────
+                    suggestions = []
+                    if not g["meal_plans"]:
+                        suggestions.append("🍽️ Offer a meal plan — guest has never opted for one")
+                    if len(g["bookings"]) == 1:
+                        suggestions.append("🎁 Send a loyalty discount for second stay")
+                    if len(g["bookings"]) >= 3:
+                        suggestions.append("🥇 Upgrade to VIP — offer room upgrade or bonfire complimentary")
+                    if g["total_nights"] > 10:
+                        suggestions.append("💌 Send a thank-you message — long-stay loyal guest")
+
+                    if suggestions:
+                        st.markdown("**💡 Upsell & Loyalty Suggestions**")
+                        for s in suggestions:
+                            st.success(s)
+
+    # ── TAB 2: Add CRM Note ───────────────────────────────────────────────────
+    with tab2:
+        st.subheader("Add Note to Guest Profile")
+        st.caption("Use this to record preferences, complaints, special requests, or VIP notes.")
+
+        if not guests:
+            st.info("No guests yet.")
+        else:
+            with st.form("crm_note_form"):
+                guest_names = sorted([g["name"] for g in guests])
+                sel_guest   = st.selectbox("Select Guest", guest_names)
+                note_text   = st.text_area("Note", placeholder="e.g. Prefers room 103, allergic to peanuts, celebrating anniversary...", height=100)
+                note_tag    = st.selectbox("Tag", ["General", "Preference", "Complaint", "VIP Request", "Anniversary/Birthday", "Other"])
+                submitted   = st.form_submit_button("📌 Save Note", use_container_width=True)
+                if submitted:
+                    if not note_text.strip():
+                        st.error("Enter a note.")
+                    else:
+                        st.session_state.payments.append({
+                            "id":     len(st.session_state.payments) + 1,
+                            "type":   "crm_note",
+                            "guest":  sel_guest,
+                            "note":   f"[{note_tag}] {note_text.strip()}",
+                            "date":   str(date.today()),
+                            "amount": 0,
+                        })
+                        persist()
+                        st.success(f"✅ Note saved for {sel_guest}!")
+                        st.rerun()
+
+    # ── TAB 3: Analytics ──────────────────────────────────────────────────────
+    with tab3:
+        st.subheader("Guest Analytics")
+
+        if not guests:
+            st.info("No guest data yet.")
+        else:
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.markdown("**🏆 Top Guests by Nights Stayed**")
+                top_df = pd.DataFrame([
+                    {"Guest": g["name"], "Stays": len(g["bookings"]),
+                     "Total Nights": g["total_nights"],
+                     "Total Spend": g["total_spend"]}
+                    for g in sorted(guests, key=lambda x: x["total_nights"], reverse=True)[:10]
+                ])
+                st.dataframe(top_df, use_container_width=True, hide_index=True)
+
+            with col2:
+                st.markdown("**📊 Guest Tier Breakdown**")
+                tier_counts = {"🥇 VIP": 0, "🥈 Regular": 0, "🥉 Returning": 0, "🆕 New": 0}
+                for g in guests:
+                    t = guest_tier(g)[0]
+                    tier_counts[t] = tier_counts.get(t, 0) + 1
+                tier_df = pd.DataFrame(list(tier_counts.items()), columns=["Tier", "Count"])
+                st.bar_chart(tier_df.set_index("Tier"))
+
+            st.markdown("---")
+            st.markdown("**🔄 Repeat Guest Rate**")
+            repeat_rate = round(repeat_guests / max(total_guests, 1) * 100, 1)
+            st.markdown(f"""
+            <div style='background:#f3eeff;border-radius:10px;padding:16px;border-left:4px solid #7c3aed'>
+                <div style='font-size:28px;font-weight:700;color:#3b1f6e'>{repeat_rate}%</div>
+                <div style='font-size:13px;color:#7c5cbf'>of guests have stayed more than once</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            st.markdown("---")
+            st.markdown("**📅 Booking Source Breakdown**")
+            agent_counts = {}
+            for b in bookings:
+                agent = b.get("agent", "") or "Direct"
+                agent_counts[agent] = agent_counts.get(agent, 0) + 1
+            if agent_counts:
+                agent_df = pd.DataFrame(list(agent_counts.items()), columns=["Source", "Bookings"])
+                agent_df = agent_df.sort_values("Bookings", ascending=False)
+                st.bar_chart(agent_df.set_index("Source"))
+                st.dataframe(agent_df, use_container_width=True, hide_index=True)

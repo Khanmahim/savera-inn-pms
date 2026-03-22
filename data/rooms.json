@@ -96,7 +96,7 @@
     "extra_price": 100,
     "bonfire": true,
     "bonfire_price": 100,
-    "status": "occupied"
+    "status": "available"
   },
   {
     "num": "10",
