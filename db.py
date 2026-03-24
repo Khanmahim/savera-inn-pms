@@ -18,7 +18,7 @@ def _is_online():
         url = st.secrets.get("DATABASE_URL", "")
         if not url:
             return False
-        conn = psycopg2.connect(url, connect_timeout=4)
+        conn = psycopg2.connect(url, connect_timeout=10)
         conn.close()
         return True
     except Exception:
@@ -55,7 +55,7 @@ def _jsave(path, data):
 # ══════════════════════════════════════════════════════════════════════════════
 def _conn():
     import psycopg2
-    return psycopg2.connect(st.secrets["DATABASE_URL"])
+    return psycopg2.connect(st.secrets["DATABASE_URL"], connect_timeout=10)
 
 def _run(sql, params=(), fetch=None):
     import psycopg2.extras
