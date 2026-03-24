@@ -1,0 +1,18 @@
+[
+  {
+    "bill_id": "BILL-001",
+    "guest": "Rajan Mehta",
+    "room": "102",
+    "nights": 7,
+    "room_charge": 0,
+    "extra_bed": 0,
+    "food": 200,
+    "laundry": 50,
+    "electricity": 50,
+    "bonfire": 80,
+    "other": 0,
+    "total": 380,
+    "status": "Pending",
+    "date": "2026-03-20"
+  }
+]
