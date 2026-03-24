@@ -1,34 +1,19 @@
 """
-db.py — Smart dual-mode database layer for Savera Inn Resort PMS
-
-Online  → uses PostgreSQL (Supabase) — cloud, multi-user, persistent
-Offline → uses local JSON files       — works without internet
+db.py — PostgreSQL database layer for Savera Inn Resort PMS
+Always uses Supabase when DATABASE_URL is available in secrets.
 """
-import os
 import json
 import streamlit as st
 from datetime import date
 from pathlib import Path
 
-# ── Detect mode ───────────────────────────────────────────────────────────────
-def _is_online():
-    """Try connecting to Supabase. Returns True if successful."""
-    try:
-        url = st.secrets.get("DATABASE_URL", "")
-        if not url:
-            return False
-        # Just check if URL exists and we can import psycopg2
-        import psycopg2
-        return True
-    except Exception:
-        return False
-
-# ── Check once per session ────────────────────────────────────────────────────
-if "db_mode" not in st.session_state:
-    online = _is_online()
-    st.session_state.db_mode = "online" if online else "offline"
-
-MODE = st.session_state.db_mode
+# ── Always online if DATABASE_URL exists in secrets ───────────────────────────
+try:
+    _DB_URL = st.secrets["DATABASE_URL"]
+    MODE = "online"
+except Exception:
+    _DB_URL = None
+    MODE = "offline"
 
 # ── Local JSON fallback paths ─────────────────────────────────────────────────
 DATA_DIR = Path("data")
@@ -49,12 +34,10 @@ def _jsave(path, data):
     with open(path, "w") as f:
         json.dump(data, f, indent=2, default=str)
 
-# ══════════════════════════════════════════════════════════════════════════════
-# PostgreSQL helpers
-# ══════════════════════════════════════════════════════════════════════════════
+# ── PostgreSQL helpers ────────────────────────────────────────────────────────
 def _conn():
     import psycopg2
-    return psycopg2.connect(st.secrets["DATABASE_URL"], connect_timeout=10)
+    return psycopg2.connect(_DB_URL, connect_timeout=10)
 
 def _run(sql, params=(), fetch=None):
     import psycopg2.extras
@@ -76,7 +59,6 @@ def _run(sql, params=(), fetch=None):
 # ══════════════════════════════════════════════════════════════════════════════
 def setup_tables():
     if MODE == "offline":
-        # Just ensure local JSON files exist
         for path, default in [
             (ROOMS_FILE, []), (BOOKINGS_FILE, []),
             (BILLS_FILE, []), (EXPENSES_FILE, []), (PAYMENTS_FILE, [])
@@ -84,7 +66,6 @@ def setup_tables():
             if not path.exists():
                 _jsave(path, default)
         return
-
     conn = _conn()
     try:
         with conn:

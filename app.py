@@ -360,7 +360,7 @@ with st.sidebar:
     st.markdown("## 🏔️ Savera Inn Resort")
     st.markdown("**Property Manager**")
     # ── Online / Offline indicator ────────────────────────────────────────────
-    if st.session_state.get("db_mode") == "online":
+    if DB.MODE == "online":
         st.markdown("🟢 **Online** — Cloud database active")
     else:
         st.markdown("🔴 **OFFLINE MODE**")
@@ -378,7 +378,7 @@ with st.sidebar:
         st.rerun()
 
 # ── Offline warning banner ────────────────────────────────────────────────────
-if st.session_state.get("db_mode") == "offline":
+if DB.MODE == "offline":
     st.markdown("""
     <div style='background:#dc2626;color:white;padding:16px 20px;border-radius:10px;
                 margin-bottom:16px;text-align:center;font-size:16px;font-weight:600'>
@@ -392,7 +392,7 @@ if st.session_state.get("db_mode") == "offline":
 
 def require_online():
     """Call this before any write operation. Stops action if offline."""
-    if st.session_state.get("db_mode") == "offline":
+    if DB.MODE == "offline":
         st.error("🔴 Cannot save — No internet connection. Please connect to internet first.")
         st.stop()
 
