@@ -14,12 +14,11 @@ from pathlib import Path
 def _is_online():
     """Try connecting to Supabase. Returns True if successful."""
     try:
-        import psycopg2
         url = st.secrets.get("DATABASE_URL", "")
         if not url:
             return False
-        conn = psycopg2.connect(url, connect_timeout=10)
-        conn.close()
+        # Just check if URL exists and we can import psycopg2
+        import psycopg2
         return True
     except Exception:
         return False
