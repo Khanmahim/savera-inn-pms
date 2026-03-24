@@ -1,10 +1,7 @@
 import streamlit as st
 import pandas as pd
-import json
 import hashlib
-import os
 from datetime import date, datetime, timedelta
-from pathlib import Path
 
 # ── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -113,9 +110,7 @@ def show_login():
 
         st.markdown("""
         <div style='text-align:center; margin-top:1.2rem; font-size:12px; color:#999; line-height:2'>
-            <b>Admin:</b> admin / savera@2025 &nbsp;|&nbsp;
-            <b>Front Desk:</b> frontdesk / desk@123 &nbsp;|&nbsp;
-            <b>Manager:</b> manager / manager@123
+            Contact your administrator for login credentials.
         </div>
         """, unsafe_allow_html=True)
 
@@ -127,53 +122,15 @@ if not st.session_state.logged_in:
     show_login()
     st.stop()
 
-# ── Data file paths ───────────────────────────────────────────────────────────
-DATA_DIR = Path("data")
-DATA_DIR.mkdir(exist_ok=True)
-ROOMS_FILE    = DATA_DIR / "rooms.json"
-BOOKINGS_FILE = DATA_DIR / "bookings.json"
-BILLS_FILE    = DATA_DIR / "bills.json"
-EXPENSES_FILE = DATA_DIR / "expenses.json"
+# ── Database setup ───────────────────────────────────────────────────────────
+import db as DB
 
-# ── Helpers: load / save JSON ─────────────────────────────────────────────────
-def load(path, default):
-    if path.exists():
-        with open(path) as f:
-            return json.load(f)
-    return default
-
-def save(path, data):
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2, default=str)
-
-# ── Seed demo data ────────────────────────────────────────────────────────────
-def seed_data():
-    if not ROOMS_FILE.exists():
-        save(ROOMS_FILE, [
-            {"num": "101", "type": "Standard", "ac": "Non-AC", "price": 2000, "extra_bed": True,  "extra_price": 400, "bonfire": False, "bonfire_price": 0,   "status": "available"},
-            {"num": "102", "type": "Deluxe",   "ac": "AC",     "price": 3500, "extra_bed": True,  "extra_price": 600, "bonfire": True,  "bonfire_price": 800, "status": "occupied"},
-            {"num": "103", "type": "Suite",     "ac": "AC",     "price": 6000, "extra_bed": True,  "extra_price": 800, "bonfire": True,  "bonfire_price": 800, "status": "available"},
-            {"num": "104", "type": "Standard",  "ac": "AC",     "price": 2500, "extra_bed": False, "extra_price": 0,   "bonfire": False, "bonfire_price": 0,   "status": "cleaning"},
-            {"num": "105", "type": "Deluxe",    "ac": "AC",     "price": 3500, "extra_bed": True,  "extra_price": 600, "bonfire": True,  "bonfire_price": 800, "status": "available"},
-        ])
-    if not BOOKINGS_FILE.exists():
-        save(BOOKINGS_FILE, [
-            {"id": 1, "guest": "Rajan Mehta", "phone": "9876543210", "room": "102",
-             "agent": "Skyline Travels", "checkin": "2025-03-15", "checkout": "2025-03-22",
-             "extra_bed": True, "bonfire": False, "season": "Peak", "notes": "Late arrival", "status": "checked-in"},
-            {"id": 2, "guest": "Aisha Khan", "phone": "9812345678", "room": "103",
-             "agent": "Himalayan Tours", "checkin": "2025-03-18", "checkout": "2025-03-25",
-             "extra_bed": False, "bonfire": True, "season": "Peak", "notes": "", "status": "confirmed"},
-        ])
-    if not BILLS_FILE.exists():
-        save(BILLS_FILE, [])
-    if not EXPENSES_FILE.exists():
-        save(EXPENSES_FILE, [
-            {"id": 1, "date": "2025-03-10", "category": "Electricity", "desc": "Monthly bill",  "amount": 8500},
-            {"id": 2, "date": "2025-03-12", "category": "Laundry",     "desc": "Linen washing", "amount": 2000},
-        ])
-
-seed_data()
+# Create tables if they don't exist
+try:
+    DB.setup_tables()
+except Exception as e:
+    st.error(f"❌ Database error: {e}")
+    st.stop()
 
 # ── Role-based permissions ────────────────────────────────────────────────────
 # Defines what each role CAN do. Admin can do everything always.
@@ -266,18 +223,19 @@ def lock(action, message=None):
         return True
     return False
 
-# ── Load all data into session state ─────────────────────────────────────────
-if "rooms"    not in st.session_state: st.session_state.rooms    = load(ROOMS_FILE,    [])
-if "bookings" not in st.session_state: st.session_state.bookings = load(BOOKINGS_FILE, [])
-if "bills"    not in st.session_state: st.session_state.bills    = load(BILLS_FILE,    [])
-if "expenses" not in st.session_state: st.session_state.expenses = load(EXPENSES_FILE, [])
+# ── Load all data from PostgreSQL ────────────────────────────────────────────
+def load_all():
+    """Load all data fresh from database into session state."""
+    st.session_state.rooms    = DB.get_rooms()
+    st.session_state.bookings = DB.get_bookings()
+    st.session_state.bills    = DB.get_bills()
+    st.session_state.expenses = DB.get_expenses()
+    st.session_state.payments = DB.get_payments()
 
 def persist():
-    save(ROOMS_FILE,    st.session_state.rooms)
-    save(BOOKINGS_FILE, st.session_state.bookings)
-    save(BILLS_FILE,    st.session_state.bills)
-    save(EXPENSES_FILE, st.session_state.expenses)
-    save(PAYMENTS_FILE, st.session_state.payments)
+    pass  # Data is written directly to DB — kept for compatibility
+
+load_all()
 
 def nights(cin, cout):
     d1 = datetime.strptime(str(cin), "%Y-%m-%d")
@@ -345,20 +303,13 @@ def sync_room_statuses():
     """Auto-update room statuses based on today's bookings."""
     today = date.today()
     for r in st.session_state.rooms:
-        status, _ = get_room_status_on_date(r["num"], today)
-        # Only auto-set occupied/available; preserve "cleaning" if manually set
         if r.get("status") == "cleaning":
             continue
-        r["status"] = status
+        status, _ = get_room_status_on_date(r["num"], today)
+        if r.get("status") != status:
+            DB.update_room(r["num"], {"status": status})
 
-# ── Payments file ─────────────────────────────────────────────────────────────
-PAYMENTS_FILE = DATA_DIR / "payments.json"
-if not PAYMENTS_FILE.exists():
-    save(PAYMENTS_FILE, [])
-if "payments" not in st.session_state:
-    st.session_state.payments = load(PAYMENTS_FILE, [])
-
-# ── Auto-sync room statuses on every page load (must be after all functions) ──
+# ── Auto-sync room statuses on every page load ───────────────────────────────
 sync_room_statuses()
 
 # ── Custom CSS ────────────────────────────────────────────────────────────────
@@ -408,6 +359,12 @@ st.markdown("""
 with st.sidebar:
     st.markdown("## 🏔️ Savera Inn Resort")
     st.markdown("**Property Manager**")
+    # ── Online / Offline indicator ────────────────────────────────────────────
+    if st.session_state.get("db_mode") == "online":
+        st.markdown("🟢 **Online** — Cloud database active")
+    else:
+        st.markdown("🔴 **OFFLINE MODE**")
+        st.markdown("⚠️ No internet connection")
     st.markdown("---")
     role_badge = {"admin": "🔴 Admin", "manager": "🟡 Manager", "staff": "🟢 Staff"}.get(st.session_state.user_role, "👤")
     st.markdown(f"**{st.session_state.user_name}** &nbsp; {role_badge}")
@@ -419,6 +376,25 @@ with st.sidebar:
         for key in ["logged_in", "username", "user_name", "user_role"]:
             st.session_state.pop(key, None)
         st.rerun()
+
+# ── Offline warning banner ────────────────────────────────────────────────────
+if st.session_state.get("db_mode") == "offline":
+    st.markdown("""
+    <div style='background:#dc2626;color:white;padding:16px 20px;border-radius:10px;
+                margin-bottom:16px;text-align:center;font-size:16px;font-weight:600'>
+        🔴 NO INTERNET CONNECTION — READ ONLY MODE<br>
+        <span style='font-size:13px;font-weight:400'>
+        You can VIEW data but cannot add or edit anything.<br>
+        Please connect to internet before making any bookings or changes.
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
+
+def require_online():
+    """Call this before any write operation. Stops action if offline."""
+    if st.session_state.get("db_mode") == "offline":
+        st.error("🔴 Cannot save — No internet connection. Please connect to internet first.")
+        st.stop()
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PAGE: DASHBOARD
@@ -579,15 +555,15 @@ elif page == "🛏️ Rooms":
                     else:
                         next_manual = "cleaning" if r["status"] == "available" else "available"
                         if sc1.button("🔄", key=f"tog_{r['num']}", help=f"Set to {next_manual}"):
-                            r["status"] = next_manual
-                            persist()
+                            require_online()
+                            DB.update_room(r["num"], {"status": next_manual})
                             st.rerun()
                     if can("edit_room") and sc2.button("✏️", key=f"edit_r_{r['num']}", help="Edit room"):
                         st.session_state["edit_room"] = r["num"]
                         st.rerun()
                     if can("delete_room") and sc3.button("🗑️", key=f"del_{r['num']}"):
-                        st.session_state.rooms = [x for x in st.session_state.rooms if x["num"] != r["num"]]
-                        persist()
+                        require_online()
+                        DB.delete_room(r["num"])
                         st.rerun()
                 # ── Inline edit form ──────────────────────────────────────────
                 if st.session_state.get("edit_room") == r["num"]:
@@ -615,15 +591,14 @@ elif page == "🛏️ Rooms":
                         save_it   = save_col.form_submit_button("💾 Save Changes", use_container_width=True)
                         cancel_it = cancel_col.form_submit_button("✖ Cancel", use_container_width=True)
                         if save_it:
-                            r["type"]         = new_type
-                            r["ac"]           = new_ac
-                            r["price"]        = new_price
-                            r["status"]       = new_stat2
-                            r["extra_bed"]    = new_eb
-                            r["extra_price"]  = new_ep if new_eb else 0
-                            r["bonfire"]      = new_bf
-                            r["bonfire_price"]= new_bfp if new_bf else 0
-                            persist()
+                            DB.update_room(r["num"], {
+                                "type": new_type, "ac": new_ac,
+                                "price": new_price, "status": new_stat2,
+                                "extra_bed": new_eb,
+                                "extra_price": new_ep if new_eb else 0,
+                                "bonfire": new_bf,
+                                "bonfire_price": new_bfp if new_bf else 0,
+                            })
                             st.session_state.pop("edit_room", None)
                             st.success(f"✅ Room {r['num']} updated!")
                             st.rerun()
@@ -655,7 +630,8 @@ elif page == "🛏️ Rooms":
                 elif any(r["num"] == num for r in st.session_state.rooms):
                     st.error(f"Room {num} already exists.")
                 else:
-                    st.session_state.rooms.append({
+                    require_online()
+                    DB.add_room({
                         "num": num, "type": rtyp, "ac": ac,
                         "price": price, "extra_bed": extra_bed,
                         "extra_price": extra_price if extra_bed else 0,
@@ -663,7 +639,6 @@ elif page == "🛏️ Rooms":
                         "bonfire_price": bonfire_price if bonfire else 0,
                         "status": "available"
                     })
-                    persist()
                     msg = f"✅ Room **{num}** added successfully! | {rtyp} | {ac} | {fmt(price)}/night"
                     if extra_bed: msg += f" | 🛏️ Extra Bed: {fmt(extra_price)}/night"
                     if bonfire:   msg += f" | 🔥 Bonfire: {fmt(bonfire_price)}/session"
@@ -729,15 +704,14 @@ elif page == "📋 Bookings":
                     a1, a2 = st.columns(2)
                     if b["status"] == "checked-in" and can("checkout_guest"):
                         if a1.button("✅ Out", key=f"co_{b['id']}", help="Checkout"):
-                            b["status"] = "checked-out"
-                            room = get_room(b["room"])
-                            if room:
-                                room["status"] = "cleaning"
-                            persist()
+                            require_online()
+                            require_online()
+                            DB.update_booking(b["id"], {"status": "checked-out"})
+                            DB.update_room(b["room"].split(",")[0].strip(), {"status": "cleaning"})
                             st.rerun()
                     if can("delete_booking") and a2.button("🗑️", key=f"db_{b['id']}", help="Delete"):
-                        st.session_state.bookings = [x for x in st.session_state.bookings if x["id"] != b["id"]]
-                        persist()
+                        require_online()
+                        DB.delete_booking(b["id"])
                         st.rerun()
 
                 # collapsible extra details
@@ -794,23 +768,18 @@ elif page == "📋 Bookings":
                         do_save   = sv.form_submit_button("💾 Save Changes", use_container_width=True)
                         do_cancel = cn.form_submit_button("✖ Cancel",        use_container_width=True)
                         if do_save:
-                            b["guest"]           = new_guest
-                            b["phone"]           = new_phone
-                            b["checkin"]         = str(new_checkin)
-                            b["checkout"]        = str(new_checkout)
-                            b["agent"]           = new_agent
-                            b["season"]          = new_season
-                            b["extra_bed"]       = new_eb
-                            b["extra_bed_count"] = int(new_eb_cnt) if new_eb else 0
-                            b["bonfire"]         = new_bf
-                            b["status"]          = new_status
-                            b["meal_plan"]       = new_meal
-                            b["notes"]           = new_notes
+                            DB.update_booking(b["id"], {
+                                "guest": new_guest, "phone": new_phone,
+                                "checkin": str(new_checkin), "checkout": str(new_checkout),
+                                "agent": new_agent, "season": new_season,
+                                "extra_bed": new_eb,
+                                "extra_bed_count": int(new_eb_cnt) if new_eb else 0,
+                                "bonfire": new_bf, "status": new_status,
+                                "meal_plan": new_meal, "notes": new_notes,
+                            })
                             if new_status == "checked-out":
                                 for rn in b.get("rooms", [b.get("room","")]):
-                                    rm = get_room(rn)
-                                    if rm: rm["status"] = "cleaning"
-                            persist()
+                                    DB.update_room(rn.strip(), {"status": "cleaning"})
                             st.session_state.pop("edit_booking", None)
                             st.success(f"✅ Booking for {new_guest} updated!")
                             st.rerun()
@@ -890,39 +859,28 @@ elif page == "📋 Bookings":
                             for cf in conflicts:
                                 st.warning(cf)
                         else:
-                            new_id = max((b["id"] for b in st.session_state.bookings), default=0) + 1
-                            st.session_state.bookings.append({
-                                "id": new_id, "guest": guest, "phone": phone,
-                                "room": ", ".join(rnums),
-                                "rooms": rnums,
+                            require_online()
+                            new_id = DB.add_booking({
+                                "guest": guest, "phone": phone,
+                                "room": ", ".join(rnums), "rooms": rnums,
                                 "agent": agent,
                                 "checkin": str(checkin), "checkout": str(checkout),
                                 "extra_bed": extra_bed,
                                 "extra_bed_count": int(extra_bed_count) if extra_bed and extra_bed_count != "0 (None)" else 0,
-                                "season": season,
-                                "bonfire": bonfire_requested,
-                                "meal_plan": meal_plan,
-                                "meal_price": meal_price,
-                                "advance_paid": advance_paid,
-                                "advance_method": advance_method,
+                                "season": season, "bonfire": bonfire_requested,
+                                "meal_plan": meal_plan, "meal_price": meal_price,
+                                "advance_paid": advance_paid, "advance_method": advance_method,
                                 "notes": notes, "status": "confirmed",
                                 "payment_status": "partial" if advance_paid > 0 else "unpaid",
                             })
-                            # Record advance payment in payment log
                             if advance_paid > 0:
-                                st.session_state.payments.append({
-                                    "id": len(st.session_state.payments) + 1,
-                                    "booking_id": new_id,
-                                    "guest": guest,
-                                    "room": ", ".join(rnums),
-                                    "amount": advance_paid,
-                                    "method": advance_method,
-                                    "type": "advance",
-                                    "date": str(date.today()),
-                                    "note": "Advance at booking",
+                                DB.add_payment({
+                                    "booking_id": new_id, "guest": guest,
+                                    "room": ", ".join(rnums), "amount": advance_paid,
+                                    "method": advance_method, "type": "advance",
+                                    "date": str(date.today()), "note": "Advance at booking",
                                 })
                             sync_room_statuses()
-                            persist()
                             msg = f"✅ Booking confirmed for **{guest}** — Room(s) {', '.join(rnums)} | {checkin} → {checkout}"
                             if extra_bed and extra_bed_count != "0 (None)": msg += f" | 🛏️ {extra_bed_count} Extra Bed(s)"
                             if bonfire_requested: msg += " | 🔥 Bonfire"
@@ -1061,23 +1019,16 @@ elif page == "📋 Bookings":
                                 skipped += 1
                                 continue
 
-                            pb["id"] = next_id
-                            next_id += 1
-                            st.session_state.bookings.append(pb)
-
-                            # Mark room as occupied if checkin is today or past
+                            DB.add_booking(pb)
                             from datetime import date as date_cls
                             try:
-                                cin = date_cls.fromisoformat(pb["checkin"])
+                                cin  = date_cls.fromisoformat(pb["checkin"])
                                 cout = date_cls.fromisoformat(pb["checkout"])
                                 if cin <= date_cls.today() <= cout:
-                                    room_obj = get_room(pb["room"])
-                                    if room_obj: room_obj["status"] = "occupied"
+                                    DB.update_room(pb["room"].strip(), {"status": "occupied"})
                             except:
                                 pass
                             imported += 1
-
-                        persist()
                         st.success(f"🎉 Imported **{imported}** bookings! Skipped **{skipped}** duplicates.")
                         st.balloons()
                         st.rerun()
@@ -1222,8 +1173,7 @@ elif page == "₹  Billing":
                     btn1, btn2, _ = st.columns([2, 2, 4])
                     if b["status"] != "Paid" and can("mark_paid"):
                         if btn1.button("✅ Mark as Paid", key=f"pay_{b['bill_id']}"):
-                            b["status"] = "Paid"
-                            persist()
+                            DB.update_bill(b["bill_id"], {"status": "Paid"})
                             st.rerun()
                     pdf_bytes = generate_invoice_pdf(b, b.get("total", gross))
                     btn2.download_button(
@@ -1289,9 +1239,10 @@ elif page == "₹  Billing":
                 col_b.metric("Balance Due", fmt(balance))
                 submitted = st.form_submit_button("🧾 Save Bill", use_container_width=True)
                 if submitted:
-                    bill_num = len(st.session_state.bills) + 1
-                    st.session_state.bills.append({
-                        "bill_id":        f"BILL-{bill_num:03d}",
+                    new_bill_id = DB.next_bill_id()
+                    require_online()
+                    DB.add_bill({
+                        "bill_id":        new_bill_id,
                         "guest":          b_data["guest"],
                         "room":           b_data["room"],
                         "nights":         n,
@@ -1310,8 +1261,8 @@ elif page == "₹  Billing":
                         "total":          balance,
                         "status":         "Pending",
                         "date":           str(date.today()),
+                        "booking_id":     b_data.get("id"),
                     })
-                    persist()
                     st.success(f"✅ Bill saved! Gross: {fmt(gross)} | Advance: {fmt(advance_deduct)} | Balance Due: {fmt(balance)}")
                     st.rerun()
 
@@ -1359,12 +1310,11 @@ elif page == "🧾 Expenses":
                 if amount <= 0:
                     st.error("Enter a valid amount.")
                 else:
-                    new_id = max((e["id"] for e in st.session_state.expenses), default=0) + 1
-                    st.session_state.expenses.append({
-                        "id": new_id, "date": str(exp_date),
+                    require_online()
+                    DB.add_expense({
+                        "date": str(exp_date),
                         "category": category, "desc": desc, "amount": amount
                     })
-                    persist()
                     st.success("Expense added!")
                     st.rerun()
 
@@ -1467,9 +1417,7 @@ elif page == "💳 Payments":
                         st.error("Enter a valid amount.")
                     else:
                         new_pay_id = len(st.session_state.payments) + 1
-                        st.session_state.payments.append({
-                            "id":         new_pay_id,
-                            "booking_id": None,
+                        DB.add_payment({
                             "bill_id":    bill_obj.get("bill_id"),
                             "guest":      bill_obj["guest"],
                             "room":       bill_obj["room"],
@@ -1479,11 +1427,9 @@ elif page == "💳 Payments":
                             "date":       str(pay_date),
                             "note":       pay_note,
                         })
-                        # Update bill status if fully paid
                         new_total_paid = already_paid + pay_amount
                         if new_total_paid >= bill_obj.get("total", 0):
-                            bill_obj["status"] = "Paid"
-                        persist()
+                            DB.update_bill(bill_obj["bill_id"], {"status": "Paid"})
                         st.success(f"✅ Payment of {fmt(pay_amount)} recorded via {pay_method}!")
                         st.rerun()
 
@@ -1523,8 +1469,8 @@ elif page == "💳 Payments":
                     elif ref_amount > paid_so_far:
                         st.error(f"Refund cannot exceed amount paid ({fmt(paid_so_far)}).")
                     else:
-                        st.session_state.payments.append({
-                            "id":         len(st.session_state.payments) + 1,
+                        require_online()
+                        DB.add_payment({
                             "booking_id": bk_obj.get("id"),
                             "bill_id":    None,
                             "guest":      bk_obj["guest"],
@@ -1535,7 +1481,7 @@ elif page == "💳 Payments":
                             "date":       str(ref_date),
                             "note":       ref_reason,
                         })
-                        persist()
+                        load_all()
                         st.success(f"✅ Refund of {fmt(ref_amount)} issued to {bk_obj['guest']}!")
                         st.rerun()
 
@@ -1999,15 +1945,13 @@ elif page == "👥 Guests (CRM)":
                     if not note_text.strip():
                         st.error("Enter a note.")
                     else:
-                        st.session_state.payments.append({
-                            "id":     len(st.session_state.payments) + 1,
+                        DB.add_payment({
                             "type":   "crm_note",
                             "guest":  sel_guest,
                             "note":   f"[{note_tag}] {note_text.strip()}",
                             "date":   str(date.today()),
                             "amount": 0,
                         })
-                        persist()
                         st.success(f"✅ Note saved for {sel_guest}!")
                         st.rerun()
 
