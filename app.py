@@ -563,13 +563,12 @@ elif page == "🛏️ Rooms":
         else:
             for r in rooms:
                 color = {"occupied": "#f8d7da", "available": "#d4edda", "cleaning": "#fff3cd"}.get(r["status"], "#eee")
-                c1, c2, c3, c4, c5, c6 = st.columns([1, 2, 1.5, 1.5, 1.5, 2.5])
+                c1, c2, c3, c4, c5 = st.columns([1, 2, 1.5, 2, 2])
                 c1.markdown(f"**{r['num']}**")
                 c2.write(r["type"])
                 c3.write(r["ac"])
-                c4.write(f"Extra Bed: {'✅ Yes' if r['extra_bed'] else '—'}")
-                c5.markdown(f"<span style='background:{color};padding:2px 10px;border-radius:12px;font-size:12px'>{r['status']}</span> {'🔥' if r.get('bonfire') else ''}", unsafe_allow_html=True)
-                with c6:
+                c4.markdown(f"<span style='background:{color};padding:2px 10px;border-radius:12px;font-size:12px'>{r['status']}</span>", unsafe_allow_html=True)
+                with c5:
                     sc1, sc2, sc3 = st.columns(3)
                     # Only allow toggling available <-> cleaning manually
                     # "occupied" is set automatically by the availability engine
@@ -603,11 +602,6 @@ elif page == "🛏️ Rooms":
                                                   index=["AC","Non-AC"].index(r["ac"]))
                         new_stat2 = st.selectbox("Status", ["available","occupied","cleaning"],
                                                   index=["available","occupied","cleaning"].index(r.get("status","available")))
-                        new_eb = st.checkbox("Extra Bed Available?", value=r.get("extra_bed", False))
-                        ec7, ec8 = st.columns(2)
-                        new_bf    = ec7.checkbox("🔥 Bonfire?", value=r.get("bonfire", False))
-                        new_bfp   = ec8.number_input("Bonfire Charge (Rs.)", min_value=0,
-                                                     value=int(r.get("bonfire_price",0)), step=50)
                         save_col, cancel_col = st.columns(2)
                         save_it   = save_col.form_submit_button("💾 Save Changes", use_container_width=True)
                         cancel_it = cancel_col.form_submit_button("✖ Cancel", use_container_width=True)
@@ -615,10 +609,6 @@ elif page == "🛏️ Rooms":
                             DB.update_room(r["num"], {
                                 "type": new_type, "ac": new_ac,
                                 "status": new_stat2,
-                                "extra_bed": new_eb,
-                                "extra_price": 0,
-                                "bonfire": new_bf,
-                                "bonfire_price": new_bfp if new_bf else 0,
                             })
                             st.session_state.pop("edit_room", None)
                             st.success(f"✅ Room {r['num']} updated!")
@@ -635,12 +625,11 @@ elif page == "🛏️ Rooms":
             c1, c2 = st.columns(2)
             num  = c1.text_input("Room Number", placeholder="e.g. 201")
             rtyp = c2.selectbox("Room Type", ["Standard", "Deluxe", "Suite"])
-            ac          = st.selectbox("AC / Non-AC", ["AC", "Non-AC"])
-            extra_bed   = st.checkbox("Extra Bed Available?")
-            extra_price = 0
-            c7, c8 = st.columns(2)
-            bonfire       = c7.checkbox("🔥 Bonfire Available?")
-            bonfire_price = c8.number_input("Bonfire Charge (₹/session)", min_value=0, value=800, step=50)
+            ac = st.selectbox("AC / Non-AC", ["AC", "Non-AC"])
+            extra_bed     = False
+            extra_price   = 0
+            bonfire       = False
+            bonfire_price = 0
             submitted = st.form_submit_button("✅ Add Room", use_container_width=True)
             if submitted:
                 if not num:
@@ -657,10 +646,7 @@ elif page == "🛏️ Rooms":
                         "bonfire_price": bonfire_price if bonfire else 0,
                         "status": "available"
                     })
-                    msg = f"✅ Room **{num}** added successfully! | {rtyp} | {ac}"
-                    if extra_bed: msg += " | 🛏️ Extra Bed: Available"
-                    if bonfire:   msg += f" | 🔥 Bonfire: {fmt(bonfire_price)}/session"
-                    st.success(msg)
+                    st.success(f"✅ Room **{num}** added! | {rtyp} | {ac}")
                     st.rerun()
 
 # ═══════════════════════════════════════════════════════════════════════════════
