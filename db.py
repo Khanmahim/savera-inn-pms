@@ -317,3 +317,21 @@ def delete_expense(eid):
         _jsave(EXPENSES_FILE, [e for e in expenses if e["id"] != eid])
         return
     _run("DELETE FROM expenses WHERE id=%s", (eid,))
+
+def update_payment(pid, fields):
+    if MODE == "offline":
+        payments = _jload(PAYMENTS_FILE, [])
+        for p in payments:
+            if p["id"] == pid:
+                p.update(fields)
+        _jsave(PAYMENTS_FILE, payments)
+        return
+    sets = ", ".join(f"{k}=%s" for k in fields)
+    _run(f"UPDATE payments SET {sets} WHERE id=%s", list(fields.values())+[pid])
+
+def delete_payment(pid):
+    if MODE == "offline":
+        payments = _jload(PAYMENTS_FILE, [])
+        _jsave(PAYMENTS_FILE, [p for p in payments if p["id"] != pid])
+        return
+    _run("DELETE FROM payments WHERE id=%s", (pid,))

@@ -1479,34 +1479,88 @@ elif page == "💳 Payments":
         if not payments:
             st.info("No payments recorded yet.")
         else:
-            # Search
             search_p = st.text_input("🔍 Search by guest name", placeholder="Type name...")
             filtered_p = [p for p in payments if not search_p or search_p.lower() in p.get("guest","").lower()]
 
             # Headers
-            h1,h2,h3,h4,h5,h6,h7 = st.columns([0.8,2,1,1.5,1.5,1.5,1.5])
-            h1.markdown("**#**")
-            h2.markdown("**Guest**")
-            h3.markdown("**Room**")
-            h4.markdown("**Amount**")
-            h5.markdown("**Method**")
-            h6.markdown("**Type**")
-            h7.markdown("**Date**")
+            h1,h2,h3,h4,h5,h6,h7,h8 = st.columns([2,1,1.5,1.5,1.5,1.5,1,1])
+            h1.markdown("**Guest**")
+            h2.markdown("**Room**")
+            h3.markdown("**Amount**")
+            h4.markdown("**Method**")
+            h5.markdown("**Type**")
+            h6.markdown("**Date**")
+            h7.markdown("**Edit**")
+            h8.markdown("**Del**")
             st.markdown("<hr style='margin:2px 0 6px;border-color:#d8b4fe'>", unsafe_allow_html=True)
 
             for p in reversed(filtered_p):
-                c1,c2,c3,c4,c5,c6,c7 = st.columns([0.8,2,1,1.5,1.5,1.5,1.5])
-                type_color = {"advance":"🔵","final":"🟢","partial":"🟡","refund":"🔴"}.get(p.get("type",""), "⚪")
-                c1.write(str(p.get("id","")))
-                c2.write(f"**{p.get('guest','')}**")
-                c3.write(p.get("room","—"))
-                amount_str = f"- {fmt(p['amount'])}" if p.get("type") == "refund" else fmt(p["amount"])
-                c4.write(amount_str)
-                c5.write(p.get("method","—"))
-                c6.write(f"{type_color} {p.get('type','—').title()}")
-                c7.write(p.get("date","—"))
+                type_color = {"advance":"🔵","final":"🟢","partial":"🟡","refund":"🔴","crm_note":"📌"}.get(p.get("type",""), "⚪")
+                amount_str = f"- {fmt(p['amount'])}" if p.get("type") == "refund" else fmt(p.get("amount",0))
+
+                c1,c2,c3,c4,c5,c6,c7,c8 = st.columns([2,1,1.5,1.5,1.5,1.5,1,1])
+                c1.write(f"**{p.get('guest','')}**")
+                c2.write(p.get("room","—"))
+                c3.write(amount_str)
+                c4.write(p.get("method","—"))
+                c5.write(f"{type_color} {p.get('type','—').title()}")
+                c6.write(p.get("date","—"))
                 if p.get("note"):
                     st.caption(f"   📝 {p['note']}")
+
+                with c7:
+                    if st.button("✏️", key=f"edit_p_{p['id']}", help="Edit"):
+                        st.session_state["edit_payment"] = p["id"]
+                        st.rerun()
+                with c8:
+                    if st.button("🗑️", key=f"del_p_{p['id']}", help="Delete"):
+                        require_online()
+                        DB.delete_payment(p["id"])
+                        st.session_state.data_loaded = False
+                        load_all()
+                        st.success("Payment deleted!")
+                        st.rerun()
+
+                # Inline edit form
+                if st.session_state.get("edit_payment") == p["id"]:
+                    with st.form(f"edit_pay_{p['id']}"):
+                        st.markdown(f"**✏️ Editing Payment — {p.get('guest','')}**")
+                        ep1, ep2 = st.columns(2)
+                        new_amt    = ep1.number_input("Amount (₹)", min_value=0,
+                                                       value=int(p.get("amount",0)), step=100)
+                        new_method = ep2.selectbox("Method",
+                                                    ["Cash","UPI","Bank Transfer","Card","Online"],
+                                                    index=["Cash","UPI","Bank Transfer","Card","Online"].index(
+                                                        p.get("method","Cash")) if p.get("method","Cash") in
+                                                        ["Cash","UPI","Bank Transfer","Card","Online"] else 0)
+                        ep3, ep4 = st.columns(2)
+                        type_opts  = ["advance","partial","final","refund"]
+                        new_type   = ep3.selectbox("Type", type_opts,
+                                                    index=type_opts.index(p.get("type","partial"))
+                                                    if p.get("type") in type_opts else 0)
+                        new_date   = ep4.date_input("Date",
+                                                     value=datetime.strptime(str(p["date"]), "%Y-%m-%d").date()
+                                                     if p.get("date") else date.today())
+                        new_note   = st.text_input("Note", value=p.get("note",""))
+                        sv, cn     = st.columns(2)
+                        do_save    = sv.form_submit_button("💾 Save", use_container_width=True)
+                        do_cancel  = cn.form_submit_button("✖ Cancel", use_container_width=True)
+                        if do_save:
+                            require_online()
+                            DB.update_payment(p["id"], {
+                                "amount": new_amt, "method": new_method,
+                                "type": new_type, "date": str(new_date),
+                                "note": new_note,
+                            })
+                            st.session_state.pop("edit_payment", None)
+                            st.session_state.data_loaded = False
+                            load_all()
+                            st.success("✅ Payment updated!")
+                            st.rerun()
+                        if do_cancel:
+                            st.session_state.pop("edit_payment", None)
+                            st.rerun()
+
                 st.markdown("<hr style='margin:2px 0;border-color:#f0e6ff'>", unsafe_allow_html=True)
 
     with tab2:
