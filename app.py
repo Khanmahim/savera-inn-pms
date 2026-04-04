@@ -563,14 +563,13 @@ elif page == "🛏️ Rooms":
         else:
             for r in rooms:
                 color = {"occupied": "#f8d7da", "available": "#d4edda", "cleaning": "#fff3cd"}.get(r["status"], "#eee")
-                c1, c2, c3, c4, c5, c6, c7 = st.columns([1, 1.5, 1, 1.5, 1.5, 1.5, 2.5])
+                c1, c2, c3, c4, c5, c6 = st.columns([1, 2, 1.5, 1.5, 1.5, 2.5])
                 c1.markdown(f"**{r['num']}**")
                 c2.write(r["type"])
                 c3.write(r["ac"])
-                c4.write(fmt(r["price"]) + "/night")
-                c5.write(f"Extra Bed: {'Yes' if r['extra_bed'] else 'No'}")
-                c6.markdown(f"<span style='background:{color};padding:2px 10px;border-radius:12px;font-size:12px'>{r['status']}</span> {'🔥' if r.get('bonfire') else ''}", unsafe_allow_html=True)
-                with c7:
+                c4.write(f"Extra Bed: {'✅ Yes' if r['extra_bed'] else '—'}")
+                c5.markdown(f"<span style='background:{color};padding:2px 10px;border-radius:12px;font-size:12px'>{r['status']}</span> {'🔥' if r.get('bonfire') else ''}", unsafe_allow_html=True)
+                with c6:
                     sc1, sc2, sc3 = st.columns(3)
                     # Only allow toggling available <-> cleaning manually
                     # "occupied" is set automatically by the availability engine
@@ -602,13 +601,9 @@ elif page == "🛏️ Rooms":
                                                   index=["Standard","Deluxe","Suite"].index(r["type"]))
                         new_ac    = ec2.selectbox("AC / Non-AC", ["AC","Non-AC"],
                                                   index=["AC","Non-AC"].index(r["ac"]))
-                        ec3, ec4 = st.columns(2)
-                        new_price = ec3.number_input("Price/Night (Rs.)", min_value=0,
-                                                     value=int(r["price"]), step=100)
-                        new_stat2 = ec4.selectbox("Status", ["available","occupied","cleaning"],
+                        new_stat2 = st.selectbox("Status", ["available","occupied","cleaning"],
                                                   index=["available","occupied","cleaning"].index(r.get("status","available")))
                         new_eb = st.checkbox("Extra Bed Available?", value=r.get("extra_bed", False))
-                        new_ep = 0  # Price set per booking, not per room
                         ec7, ec8 = st.columns(2)
                         new_bf    = ec7.checkbox("🔥 Bonfire?", value=r.get("bonfire", False))
                         new_bfp   = ec8.number_input("Bonfire Charge (Rs.)", min_value=0,
@@ -619,9 +614,9 @@ elif page == "🛏️ Rooms":
                         if save_it:
                             DB.update_room(r["num"], {
                                 "type": new_type, "ac": new_ac,
-                                "price": new_price, "status": new_stat2,
+                                "status": new_stat2,
                                 "extra_bed": new_eb,
-                                "extra_price": 0,  # Price set per booking
+                                "extra_price": 0,
                                 "bonfire": new_bf,
                                 "bonfire_price": new_bfp if new_bf else 0,
                             })
@@ -640,11 +635,9 @@ elif page == "🛏️ Rooms":
             c1, c2 = st.columns(2)
             num  = c1.text_input("Room Number", placeholder="e.g. 201")
             rtyp = c2.selectbox("Room Type", ["Standard", "Deluxe", "Suite"])
-            c3, c4 = st.columns(2)
-            price = c3.number_input("Price per Night (₹)", min_value=0, value=2500, step=100)
-            ac    = c4.selectbox("AC / Non-AC", ["AC", "Non-AC"])
+            ac          = st.selectbox("AC / Non-AC", ["AC", "Non-AC"])
             extra_bed   = st.checkbox("Extra Bed Available?")
-            extra_price = 0  # Price set per booking, not per room
+            extra_price = 0
             c7, c8 = st.columns(2)
             bonfire       = c7.checkbox("🔥 Bonfire Available?")
             bonfire_price = c8.number_input("Bonfire Charge (₹/session)", min_value=0, value=800, step=50)
@@ -658,13 +651,13 @@ elif page == "🛏️ Rooms":
                     require_online()
                     DB.add_room({
                         "num": num, "type": rtyp, "ac": ac,
-                        "price": price, "extra_bed": extra_bed,
+                        "price": 0, "extra_bed": extra_bed,
                         "extra_price": extra_price if extra_bed else 0,
                         "bonfire": bonfire,
                         "bonfire_price": bonfire_price if bonfire else 0,
                         "status": "available"
                     })
-                    msg = f"✅ Room **{num}** added successfully! | {rtyp} | {ac} | {fmt(price)}/night"
+                    msg = f"✅ Room **{num}** added successfully! | {rtyp} | {ac}"
                     if extra_bed: msg += " | 🛏️ Extra Bed: Available"
                     if bonfire:   msg += f" | 🔥 Bonfire: {fmt(bonfire_price)}/session"
                     st.success(msg)
@@ -833,8 +826,11 @@ elif page == "📋 Bookings":
 
                 st.markdown("---")
                 st.markdown("**🛏️ Room Selection** — select one or more rooms")
-                room_options = [f"{r['num']} – {r['type']} ({r['ac']}) {fmt(r['price'])}/night" for r in available_rooms]
+                room_options = [f"{r['num']} – {r['type']} ({r['ac']})" for r in available_rooms]
                 rooms_selected = st.multiselect("Select Room(s) *", room_options)
+                rp1, rp2 = st.columns(2)
+                room_price_per_night = rp1.number_input("Room Price per Night (₹)", min_value=0, value=2500, step=100)
+                rp2.caption("💡 Price applies to all selected rooms combined")
 
                 st.markdown("---")
                 st.markdown("**🛏️ Extra Bedding**")
@@ -895,6 +891,7 @@ elif page == "📋 Bookings":
                                 "extra_bed": extra_bed,
                                 "extra_bed_count": int(extra_bed_count) if extra_bed and extra_bed_count != "0 (None)" else 0,
                                 "extra_bed_price": extra_bed_price if extra_bed else 0,
+                                "room_price": room_price_per_night,
                                 "season": season, "bonfire": bonfire_requested,
                                 "meal_plan": meal_plan, "meal_price": meal_price,
                                 "advance_paid": advance_paid, "advance_method": advance_method,
@@ -1227,11 +1224,12 @@ elif page == "₹  Billing":
             b_data = active_bookings[b_idx]
             r_data = get_room(b_data["room"])
             n      = nights(b_data["checkin"], b_data["checkout"])
-            # Multi-room: sum up all rooms
+            # Multi-room: use price set at booking time
             rnums_bill   = b_data.get("rooms", [b_data.get("room","")]) if isinstance(b_data.get("rooms"), list) else [b_data.get("room","")]
-            room_charge  = sum((get_room(rn)["price"] if get_room(rn) else 0) for rn in rnums_bill) * n
+            room_price   = int(b_data.get("room_price", 0))  # Price set at booking time
+            room_charge  = room_price * n
             eb_count     = int(b_data.get("extra_bed_count", 1)) if b_data.get("extra_bed") else 0
-            eb_price     = int(b_data.get("extra_bed_price", 0))   # Price set at booking time
+            eb_price     = int(b_data.get("extra_bed_price", 0))
             extra_charge = eb_price * eb_count * n if b_data.get("extra_bed") and eb_count else 0
 
             # ── Pre-filled summary ────────────────────────────────────────────
@@ -1239,8 +1237,8 @@ elif page == "₹  Billing":
             adv_paid     = b_data.get("advance_paid", 0)
             meal_label   = b_data.get("meal_plan", "No Meals")
 
-            rooms_info = ", ".join([f"Room {rn} ({fmt(get_room(rn)['price'] if get_room(rn) else 0)}/night)" for rn in rnums_bill])
-            st.markdown(f"**{n} nights** | {rooms_info} = **{fmt(room_charge)}**")
+            rooms_info = ", ".join([f"Room {rn}" for rn in rnums_bill])
+            st.markdown(f"**{n} nights** | {rooms_info} | {fmt(room_price)}/night = **{fmt(room_charge)}**")
             if extra_charge:
                 st.markdown(f"Extra beds: {eb_count} × {n} nights × {fmt(eb_price)}/night = **{fmt(extra_charge)}**")
             elif b_data.get("extra_bed") and eb_count:
@@ -1758,7 +1756,7 @@ elif page == "📈 Reports":
         for b in bookings:
             r      = get_room(b["room"])
             n      = nights(b["checkin"], b["checkout"])
-            rc     = r["price"] * n if r else 0
+            rc     = int(b.get("room_price", 0)) * n
             eb     = (r["extra_price"] * n if r else 0) if b.get("extra_bed") else 0
             bill   = next((bl for bl in bills if bl["guest"] == b["guest"] and bl["room"] == b["room"]), None)
             extras = (bill.get("food", 0) + bill.get("laundry", 0) + bill.get("electricity", 0) +
