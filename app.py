@@ -235,7 +235,10 @@ def load_all():
 def persist():
     pass  # Data is written directly to DB — kept for compatibility
 
-load_all()
+# ── Only load from DB once per session, not on every click ───────────────────
+if "data_loaded" not in st.session_state:
+    load_all()
+    st.session_state.data_loaded = True
 
 def nights(cin, cout):
     d1 = datetime.strptime(str(cin), "%Y-%m-%d")
@@ -1481,6 +1484,7 @@ elif page == "💳 Payments":
                             "date":       str(ref_date),
                             "note":       ref_reason,
                         })
+                        st.session_state.data_loaded = False
                         load_all()
                         st.success(f"✅ Refund of {fmt(ref_amount)} issued to {bk_obj['guest']}!")
                         st.rerun()
