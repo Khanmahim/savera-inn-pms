@@ -1275,13 +1275,18 @@ elif page == "₹  Billing":
 elif page == "🧾 Expenses":
     st.title("🧾 Expenses")
 
-    tab1, tab2 = st.tabs(["Expense Log", "➕ Add Expense"])
+    CATEGORIES = ["Electricity", "Laundry", "Food & Beverages", "Maintenance",
+                  "Staff Salary", "Marketing", "Other"]
 
+    tab1, tab2, tab3 = st.tabs(["📋 Expense Log", "➕ Add Expense", "📤 Import from Excel"])
+
+    # ── TAB 1: Expense Log with Edit & Delete ─────────────────────────────────
     with tab1:
         expenses = st.session_state.expenses
         if not expenses:
             st.info("No expenses logged yet.")
         else:
+            # Summary metrics
             cats = {}
             for e in expenses:
                 cats[e["category"]] = cats.get(e["category"], 0) + e["amount"]
@@ -1289,37 +1294,157 @@ elif page == "🧾 Expenses":
             for i, (cat, amt) in enumerate(sorted(cats.items(), key=lambda x: -x[1])[:4]):
                 cols[i].metric(cat, fmt(amt))
             st.markdown("---")
-            df = pd.DataFrame(expenses)[["date", "category", "desc", "amount"]]
-            df.columns = ["Date", "Category", "Description", "Amount (₹)"]
-            df = df.sort_values("Date", ascending=False)
-            st.dataframe(df, use_container_width=True, hide_index=True)
+
             total_exp = sum(e["amount"] for e in expenses)
             st.markdown(f"**Total Expenses: {fmt(total_exp)}**")
+            st.markdown("")
 
+            # Table headers
+            h1,h2,h3,h4,h5 = st.columns([1.2,1.8,2.5,1.2,1.5])
+            h1.markdown("**Date**")
+            h2.markdown("**Category**")
+            h3.markdown("**Description**")
+            h4.markdown("**Amount**")
+            h5.markdown("**Action**")
+            st.markdown("<hr style='margin:2px 0 6px;border-color:#d8b4fe'>", unsafe_allow_html=True)
+
+            for e in sorted(expenses, key=lambda x: x["date"], reverse=True):
+                c1,c2,c3,c4,c5 = st.columns([1.2,1.8,2.5,1.2,1.5])
+                c1.write(e["date"])
+                c2.write(e["category"])
+                c3.write(e.get("desc","—"))
+                c4.write(fmt(e["amount"]))
+                with c5:
+                    a1, a2 = st.columns(2)
+                    if can("add_expense") and a1.button("✏️", key=f"edit_e_{e['id']}", help="Edit"):
+                        st.session_state["edit_expense"] = e["id"]
+                        st.rerun()
+                    if can("add_expense") and a2.button("🗑️", key=f"del_e_{e['id']}", help="Delete"):
+                        require_online()
+                        DB.delete_expense(e["id"])
+                        st.session_state.data_loaded = False
+                        load_all()
+                        st.success("Expense deleted!")
+                        st.rerun()
+
+                # Inline edit form
+                if st.session_state.get("edit_expense") == e["id"]:
+                    with st.form(f"edit_exp_{e['id']}"):
+                        st.markdown(f"**✏️ Editing expense**")
+                        ee1, ee2 = st.columns(2)
+                        new_cat  = ee1.selectbox("Category", CATEGORIES,
+                                                  index=CATEGORIES.index(e["category"]) if e["category"] in CATEGORIES else 0)
+                        new_amt  = ee2.number_input("Amount (₹)", min_value=0,
+                                                     value=int(e["amount"]), step=50)
+                        ee3, ee4 = st.columns(2)
+                        new_date = ee3.date_input("Date", value=datetime.strptime(str(e["date"]), "%Y-%m-%d").date())
+                        new_desc = ee4.text_input("Description", value=e.get("desc",""))
+                        sv, cn   = st.columns(2)
+                        do_save  = sv.form_submit_button("💾 Save", use_container_width=True)
+                        do_cancel= cn.form_submit_button("✖ Cancel", use_container_width=True)
+                        if do_save:
+                            require_online()
+                            DB.update_expense(e["id"], {
+                                "category": new_cat, "amount": new_amt,
+                                "date": str(new_date), "description": new_desc
+                            })
+                            st.session_state.pop("edit_expense", None)
+                            st.session_state.data_loaded = False
+                            load_all()
+                            st.success("✅ Expense updated!")
+                            st.rerun()
+                        if do_cancel:
+                            st.session_state.pop("edit_expense", None)
+                            st.rerun()
+                st.markdown("<hr style='margin:2px 0;border-color:#f0e6ff'>", unsafe_allow_html=True)
+
+    # ── TAB 2: Add Expense ────────────────────────────────────────────────────
     with tab2:
         if not can("add_expense"):
             lock("add_expense")
         else:
-         st.subheader("Add Expense")
-        with st.form("add_expense_form"):
-            c1, c2 = st.columns(2)
-            category = c1.selectbox("Category", ["Electricity", "Laundry", "Food & Beverages", "Maintenance", "Staff Salary", "Marketing", "Other"])
-            amount   = c2.number_input("Amount (₹)", min_value=0, value=0, step=100)
-            c3, c4 = st.columns(2)
-            exp_date = c3.date_input("Date", value=date.today())
-            desc     = c4.text_input("Description", placeholder="Brief description")
-            submitted = st.form_submit_button("✅ Add Expense", use_container_width=True)
-            if submitted:
-                if amount <= 0:
-                    st.error("Enter a valid amount.")
-                else:
-                    require_online()
-                    DB.add_expense({
-                        "date": str(exp_date),
-                        "category": category, "desc": desc, "amount": amount
-                    })
-                    st.success("Expense added!")
-                    st.rerun()
+            st.subheader("Add Expense")
+            with st.form("add_expense_form"):
+                c1, c2 = st.columns(2)
+                category = c1.selectbox("Category", CATEGORIES)
+                amount   = c2.number_input("Amount (₹)", min_value=0, value=0, step=100)
+                c3, c4 = st.columns(2)
+                exp_date = c3.date_input("Date", value=date.today())
+                desc     = c4.text_input("Description", placeholder="Brief description")
+                submitted = st.form_submit_button("✅ Add Expense", use_container_width=True)
+                if submitted:
+                    if amount <= 0:
+                        st.error("Enter a valid amount.")
+                    else:
+                        require_online()
+                        DB.add_expense({
+                            "date": str(exp_date),
+                            "category": category, "desc": desc, "amount": amount
+                        })
+                        st.session_state.data_loaded = False
+                        load_all()
+                        st.success(f"✅ Expense of {fmt(amount)} added!")
+                        st.rerun()
+
+    # ── TAB 3: Import from Excel ──────────────────────────────────────────────
+    with tab3:
+        if not can("add_expense"):
+            lock("add_expense")
+        else:
+            st.subheader("📤 Import Expenses from Excel")
+            st.markdown("""
+            Upload an Excel file with these columns:
+            **Date | Category | Description | Amount**
+
+            The first row should be the header.
+            """)
+            uploaded = st.file_uploader("Choose Excel file", type=["xlsx","xls"])
+            if uploaded:
+                try:
+                    df_imp = pd.read_excel(uploaded)
+                    df_imp.columns = [c.strip().lower() for c in df_imp.columns]
+
+                    # Try to find matching columns flexibly
+                    col_map = {}
+                    for col in df_imp.columns:
+                        if "date" in col:       col_map["date"]   = col
+                        if "cat" in col:        col_map["cat"]    = col
+                        if "desc" in col or "note" in col: col_map["desc"] = col
+                        if "amount" in col or "amt" in col or "cost" in col: col_map["amt"] = col
+
+                    if "amt" not in col_map:
+                        st.error("Could not find an Amount column. Make sure your Excel has a column named 'Amount'.")
+                    else:
+                        preview_rows = []
+                        for _, row in df_imp.iterrows():
+                            try:
+                                amt = float(row[col_map["amt"]])
+                                if amt <= 0: continue
+                                preview_rows.append({
+                                    "date":     str(pd.to_datetime(row[col_map["date"]]).date()) if "date" in col_map and pd.notna(row.get(col_map["date"])) else str(date.today()),
+                                    "category": str(row[col_map["cat"]]).strip() if "cat" in col_map else "Other",
+                                    "desc":     str(row[col_map["desc"]]).strip() if "desc" in col_map else "",
+                                    "amount":   int(amt),
+                                })
+                            except:
+                                continue
+
+                        st.markdown(f"**Preview — {len(preview_rows)} expenses found:**")
+                        prev_df = pd.DataFrame(preview_rows)
+                        st.dataframe(prev_df, use_container_width=True, hide_index=True)
+                        st.markdown(f"**Total: {fmt(sum(r['amount'] for r in preview_rows))}**")
+
+                        if st.button("✅ Import All Expenses", type="primary", use_container_width=True):
+                            require_online()
+                            for row in preview_rows:
+                                DB.add_expense(row)
+                            st.session_state.data_loaded = False
+                            load_all()
+                            st.success(f"🎉 Imported {len(preview_rows)} expenses!")
+                            st.balloons()
+                            st.rerun()
+                except Exception as ex:
+                    st.error(f"Error reading file: {ex}")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PAGE: PAYMENTS

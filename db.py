@@ -299,3 +299,21 @@ def add_payment(p):
          (p.get("booking_id"),p.get("bill_id"),p.get("guest",""),
           p.get("room",""),p.get("amount",0),p.get("method","Cash"),
           p.get("type",""),p.get("date",str(date.today())),p.get("note","")))
+
+def update_expense(eid, fields):
+    if MODE == "offline":
+        expenses = _jload(EXPENSES_FILE, [])
+        for e in expenses:
+            if e["id"] == eid:
+                e.update(fields)
+        _jsave(EXPENSES_FILE, expenses)
+        return
+    sets = ", ".join(f"{k}=%s" for k in fields)
+    _run(f"UPDATE expenses SET {sets} WHERE id=%s", list(fields.values())+[eid])
+
+def delete_expense(eid):
+    if MODE == "offline":
+        expenses = _jload(EXPENSES_FILE, [])
+        _jsave(EXPENSES_FILE, [e for e in expenses if e["id"] != eid])
+        return
+    _run("DELETE FROM expenses WHERE id=%s", (eid,))
