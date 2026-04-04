@@ -547,7 +547,7 @@ elif page == "🛏️ Rooms":
                 c2.write(r["type"])
                 c3.write(r["ac"])
                 c4.write(fmt(r["price"]) + "/night")
-                c5.write(f"Extra Bed: {'Yes +' + fmt(r['extra_price']) if r['extra_bed'] else 'No'}")
+                c5.write(f"Extra Bed: {'Yes' if r['extra_bed'] else 'No'}")
                 c6.markdown(f"<span style='background:{color};padding:2px 10px;border-radius:12px;font-size:12px'>{r['status']}</span> {'🔥' if r.get('bonfire') else ''}", unsafe_allow_html=True)
                 with c7:
                     sc1, sc2, sc3 = st.columns(3)
@@ -582,10 +582,8 @@ elif page == "🛏️ Rooms":
                                                      value=int(r["price"]), step=100)
                         new_stat2 = ec4.selectbox("Status", ["available","occupied","cleaning"],
                                                   index=["available","occupied","cleaning"].index(r.get("status","available")))
-                        ec5, ec6 = st.columns(2)
-                        new_eb    = ec5.checkbox("Extra Bed?", value=r.get("extra_bed", False))
-                        new_ep    = ec6.number_input("Extra Bed Charge (Rs.)", min_value=0,
-                                                     value=int(r.get("extra_price",0)), step=50)
+                        new_eb = st.checkbox("Extra Bed Available?", value=r.get("extra_bed", False))
+                        new_ep = 0  # Price set per booking, not per room
                         ec7, ec8 = st.columns(2)
                         new_bf    = ec7.checkbox("🔥 Bonfire?", value=r.get("bonfire", False))
                         new_bfp   = ec8.number_input("Bonfire Charge (Rs.)", min_value=0,
@@ -598,7 +596,7 @@ elif page == "🛏️ Rooms":
                                 "type": new_type, "ac": new_ac,
                                 "price": new_price, "status": new_stat2,
                                 "extra_bed": new_eb,
-                                "extra_price": new_ep if new_eb else 0,
+                                "extra_price": 0,  # Price set per booking
                                 "bonfire": new_bf,
                                 "bonfire_price": new_bfp if new_bf else 0,
                             })
@@ -620,9 +618,8 @@ elif page == "🛏️ Rooms":
             c3, c4 = st.columns(2)
             price = c3.number_input("Price per Night (₹)", min_value=0, value=2500, step=100)
             ac    = c4.selectbox("AC / Non-AC", ["AC", "Non-AC"])
-            c5, c6 = st.columns(2)
-            extra_bed   = c5.checkbox("Extra Bed Available?")
-            extra_price = c6.number_input("Extra Bed Charge (₹/night)", min_value=0, value=500, step=50)
+            extra_bed   = st.checkbox("Extra Bed Available?")
+            extra_price = 0  # Price set per booking, not per room
             c7, c8 = st.columns(2)
             bonfire       = c7.checkbox("🔥 Bonfire Available?")
             bonfire_price = c8.number_input("Bonfire Charge (₹/session)", min_value=0, value=800, step=50)
@@ -643,7 +640,7 @@ elif page == "🛏️ Rooms":
                         "status": "available"
                     })
                     msg = f"✅ Room **{num}** added successfully! | {rtyp} | {ac} | {fmt(price)}/night"
-                    if extra_bed: msg += f" | 🛏️ Extra Bed: {fmt(extra_price)}/night"
+                    if extra_bed: msg += " | 🛏️ Extra Bed: Available"
                     if bonfire:   msg += f" | 🔥 Bonfire: {fmt(bonfire_price)}/session"
                     st.success(msg)
                     st.rerun()
@@ -686,8 +683,8 @@ elif page == "📋 Bookings":
                 n           = nights(b["checkin"], b["checkout"])
                 r           = get_room(b["room"])
                 room_charge = r["price"] * n if r else 0
-                extra_bed   = (r["extra_price"] * n if r else 0) if b.get("extra_bed") else 0
-                total       = room_charge + extra_bed
+                extra_bed   = 0  # Charged at billing time
+                total       = room_charge
                 status_icon = {"checked-in": "🟢", "confirmed": "🔵", "checked-out": "⚫"}.get(b["status"], "⚪")
                 extras_str  = " ".join(filter(None, [
                     "🛏️" if b.get("extra_bed") else "",
@@ -724,7 +721,7 @@ elif page == "📋 Bookings":
                     d1.write(f"🌄 **Season:** {b.get('season', '—')}")
                     d1.write(f"🏢 **Agent:** {b.get('agent') or '—'}")
                     d1.write(f"🍽️ **Meal Plan:** {b.get('meal_plan', 'No Meals')}")
-                    eb_txt = f"Yes × {b.get('extra_bed_count', 1)} bed(s)" if b.get('extra_bed') else 'No'
+                    eb_txt = f"Yes × {b.get('extra_bed_count', 1)} bed(s) @ {fmt(b.get('extra_bed_price',0))}/night" if b.get('extra_bed') else 'No'
                     d2.write(f"🛏️ **Extra Bed:** {eb_txt}")
                     d2.write(f"🔥 **Bonfire:** {'Yes' if b.get('bonfire') else 'No'}")
                     adv = b.get('advance_paid', 0)
@@ -817,7 +814,9 @@ elif page == "📋 Bookings":
                 st.markdown("---")
                 st.markdown("**🛏️ Extra Bedding**")
                 extra_bed       = st.checkbox("Extra Bed Required?")
-                extra_bed_count = st.selectbox("Number of Extra Beds", ["0 (None)", "1", "2", "3", "4"])
+                eb1, eb2 = st.columns(2)
+                extra_bed_count = eb1.selectbox("Number of Extra Beds", ["0 (None)", "1", "2", "3", "4"])
+                extra_bed_price = eb2.number_input("Extra Bed Charge (₹/bed/night)", min_value=0, value=500, step=50)
 
                 st.markdown("---")
                 st.markdown("**🍽️ Meal Plan**")
@@ -870,6 +869,7 @@ elif page == "📋 Bookings":
                                 "checkin": str(checkin), "checkout": str(checkout),
                                 "extra_bed": extra_bed,
                                 "extra_bed_count": int(extra_bed_count) if extra_bed and extra_bed_count != "0 (None)" else 0,
+                                "extra_bed_price": extra_bed_price if extra_bed else 0,
                                 "season": season, "bonfire": bonfire_requested,
                                 "meal_plan": meal_plan, "meal_price": meal_price,
                                 "advance_paid": advance_paid, "advance_method": advance_method,
@@ -1206,7 +1206,8 @@ elif page == "₹  Billing":
             rnums_bill   = b_data.get("rooms", [b_data.get("room","")]) if isinstance(b_data.get("rooms"), list) else [b_data.get("room","")]
             room_charge  = sum((get_room(rn)["price"] if get_room(rn) else 0) for rn in rnums_bill) * n
             eb_count     = int(b_data.get("extra_bed_count", 1)) if b_data.get("extra_bed") else 0
-            extra_charge = (r_data["extra_price"] * eb_count * n if r_data else 0) if b_data.get("extra_bed") else 0
+            eb_price     = int(b_data.get("extra_bed_price", 0))   # Price set at booking time
+            extra_charge = eb_price * eb_count * n if b_data.get("extra_bed") and eb_count else 0
 
             # ── Pre-filled summary ────────────────────────────────────────────
             meal_default = b_data.get("meal_price", 0) * n if b_data.get("meal_price", 0) else 0
@@ -1216,7 +1217,9 @@ elif page == "₹  Billing":
             rooms_info = ", ".join([f"Room {rn} ({fmt(get_room(rn)['price'] if get_room(rn) else 0)}/night)" for rn in rnums_bill])
             st.markdown(f"**{n} nights** | {rooms_info} = **{fmt(room_charge)}**")
             if extra_charge:
-                st.markdown(f"Extra beds: {eb_count} × {n} nights × {fmt(r_data['extra_price'] if r_data else 0)}/night = **{fmt(extra_charge)}**")
+                st.markdown(f"Extra beds: {eb_count} × {n} nights × {fmt(eb_price)}/night = **{fmt(extra_charge)}**")
+            elif b_data.get("extra_bed") and eb_count:
+                st.markdown(f"⚠️ Extra bed price not set — please enter below")
             if meal_default:
                 st.markdown(f"Meals ({meal_label}): {n} days × {fmt(b_data.get('meal_price',0))}/day = **{fmt(meal_default)}**")
             if adv_paid:
