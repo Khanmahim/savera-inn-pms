@@ -843,9 +843,18 @@ elif page == "📋 Bookings":
                 advance_method = dp.selectbox("Payment Method", ["Cash", "UPI", "Bank Transfer", "Card", "Online"])
 
                 st.markdown("---")
-                bonfire_requested = st.checkbox("🔥 Bonfire Requested?")
-                if bonfire_requested:
-                    st.caption("🔥 Bonfire charge will be added at billing time.")
+                st.markdown("**🔥 Bonfire**")
+                Bonfire       = st.checkbox("🔥 Bonfire Requested?")
+                eb1, eb2 = st.columns(2)
+                Bonfire_nights = eb1.selectbox("Number of Bonfire Nights", ["0 (None)", "1", "2", "3", "4"])
+                Bonfire_nights_price = eb2.number_input("Bonfire Charge (₹/night)", min_value=0, value=500, step=50)
+
+
+                
+
+
+
+
                 notes     = st.text_area("Notes / Special Requests", height=80)
                 submitted = st.form_submit_button("✅ Confirm Booking", use_container_width=True)
                 if submitted:
