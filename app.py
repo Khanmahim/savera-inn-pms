@@ -374,7 +374,28 @@ with st.sidebar:
     st.markdown("---")
     page = st.radio("Navigate", allowed_pages(), label_visibility="collapsed")
     st.markdown("---")
+
+    # ── Auto-refresh every 60 seconds ────────────────────────────────────────
+    import time
+    now = time.time()
+    last_refresh = st.session_state.get("last_refresh", 0)
+    if now - last_refresh > 60:
+        st.session_state.data_loaded = False
+        load_all()
+        st.session_state.last_refresh = now
+
+    # ── Manual refresh button ─────────────────────────────────────────────────
+    if st.button("🔄 Refresh Data", use_container_width=True):
+        st.session_state.data_loaded = False
+        load_all()
+        st.session_state.last_refresh = time.time()
+        st.success("✅ Data refreshed!")
+
+    # ── Last refreshed time ───────────────────────────────────────────────────
+    last_dt = datetime.fromtimestamp(st.session_state.get("last_refresh", now))
+    st.caption(f"🕐 Updated: {last_dt.strftime('%H:%M:%S')}")
     st.caption(f"📅 {date.today().strftime('%d %b %Y, %A')}")
+
     if st.button("🚪 Logout", use_container_width=True):
         for key in ["logged_in", "username", "user_name", "user_role"]:
             st.session_state.pop(key, None)
