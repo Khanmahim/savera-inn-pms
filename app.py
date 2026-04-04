@@ -560,6 +560,8 @@ elif page == "🛏️ Rooms":
                         if sc1.button("🔄", key=f"tog_{r['num']}", help=f"Set to {next_manual}"):
                             require_online()
                             DB.update_room(r["num"], {"status": next_manual})
+                            st.session_state.data_loaded = False
+                            load_all()
                             st.rerun()
                     if can("edit_room") and sc2.button("✏️", key=f"edit_r_{r['num']}", help="Edit room"):
                         st.session_state["edit_room"] = r["num"]
@@ -567,6 +569,8 @@ elif page == "🛏️ Rooms":
                     if can("delete_room") and sc3.button("🗑️", key=f"del_{r['num']}"):
                         require_online()
                         DB.delete_room(r["num"])
+                        st.session_state.data_loaded = False
+                        load_all()
                         st.rerun()
                 # ── Inline edit form ──────────────────────────────────────────
                 if st.session_state.get("edit_room") == r["num"]:
