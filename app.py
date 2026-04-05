@@ -1528,30 +1528,25 @@ elif page == "₹  Billing":
 
                     # ── STEP 3: Summary card ──────────────────────────────────
                     rooms_str  = ", ".join([f"Room {r}" for r in all_rooms])
-                    agent_line = f" &nbsp;|&nbsp; 🏢 {b_data.get('agent','')}" if b_data.get("agent","") and b_data.get("agent") != selected_name else ""
-                    eb_line    = f"&nbsp;&nbsp; 🛏️ Extra Bed: {fmt(extra_charge)}" if extra_charge else ""
-                    meal_line  = f"&nbsp;&nbsp; 🍽️ Meals: {fmt(meal_default)}"   if meal_default  else ""
-                    bf_line    = f"&nbsp;&nbsp; 🔥 Bonfire: {fmt(bonfire_def)}"  if bonfire_def   else ""
-                    adv_line   = f"&nbsp;&nbsp; 💳 Advance: {fmt(adv_paid)}"    if adv_paid      else ""
 
-                    st.markdown(f"""
-                    <div style='background:#f3eeff;border-radius:10px;padding:16px 20px;
-                                border-left:4px solid #7c3aed;margin:10px 0'>
-                        <div style='font-size:15px;font-weight:700;color:#3b1f6e;margin-bottom:8px'>
-                            📋 Billing Summary
-                        </div>
-                        <div style='font-size:13px;color:#5b21b6;line-height:2'>
-                            👤 <b>{selected_name}</b> &nbsp;|&nbsp;
-                            📅 {cin_sel} → {cout_sel} &nbsp;|&nbsp;
-                            🌙 <b>{n_nights} nights</b>
-                            {agent_line}<br>
-                            🛏️ <b>{rooms_str}</b>
-                        </div>
-                        <div style='font-size:12px;color:#7c3aed;margin-top:8px;line-height:2'>
-                            🏨 {fmt(room_price)}/night × {n_nights} nights = <b>{fmt(room_charge)}</b>
-                            {eb_line}{meal_line}{bf_line}{adv_line}
-                        </div>
-                    </div>""", unsafe_allow_html=True)
+                    # ── Clean summary using Streamlit components ───────────────
+                    st.markdown("**📋 Billing Summary**")
+                    s1, s2, s3 = st.columns(3)
+                    s1.info(f"👤 **{selected_name}**")
+                    s2.info(f"📅 {cin_sel} → {cout_sel}")
+                    s3.info(f"🌙 **{n_nights} nights**")
+                    st.info(f"🛏️ **{rooms_str}**")
+
+                    # Charge breakdown
+                    row = []
+                    row.append(f"🏨 Room: {fmt(room_price)}/night × {n_nights} = **{fmt(room_charge)}**")
+                    if extra_charge:  row.append(f"🛏️ Extra Bed: **{fmt(extra_charge)}**")
+                    if meal_default:  row.append(f"🍽️ Meals: **{fmt(meal_default)}**")
+                    if bonfire_def:   row.append(f"🔥 Bonfire: **{fmt(bonfire_def)}**")
+                    if adv_paid:      row.append(f"💳 Advance paid: **{fmt(adv_paid)}**")
+                    for r in row:
+                        st.markdown(f"&nbsp;&nbsp;&nbsp; {r}")
+                    st.markdown("---")
 
                     # ── STEP 4: Extra charges form ────────────────────────────
                     st.markdown("**➕ Step 3 — Add Extra Charges**")
