@@ -355,3 +355,115 @@ def delete_payment(pid):
         _jsave(PAYMENTS_FILE, [p for p in payments if p["id"] != pid])
         return
     _run("DELETE FROM payments WHERE id=%s", (pid,))
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SQL-POWERED QUERY FUNCTIONS (replaces slow Python loops)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def get_room_status_on_date_sql(room_num, check_date):
+    """
+    Fast SQL version — checks if a room is occupied on a given date.
+    Uses index on (checkin, checkout) for O(log n) instead of O(n).
+    Returns (status, booking_dict or None)
+    """
+    if MODE == "offline":
+        # Fallback to Python loop for offline mode
+        from datetime import datetime as dt
+        bookings = _jload(BOOKINGS_FILE, [])
+        for b in bookings:
+            if b.get("status") == "checked-out":
+                continue
+            rooms_list = b.get("rooms", [b.get("room", "")])
+            if not isinstance(rooms_list, list):
+                rooms_list = [rooms_list]
+            if room_num not in rooms_list:
+                continue
+            try:
+                cin  = dt.strptime(b["checkin"],  "%Y-%m-%d").date()
+                cout = dt.strptime(b["checkout"], "%Y-%m-%d").date()
+                if cin <= check_date < cout:
+                    return "occupied", b
+            except:
+                pass
+        return "available", None
+
+    row = _run("""
+        SELECT * FROM bookings
+        WHERE (room = %s OR %s = ANY(rooms))
+          AND status != 'checked-out'
+          AND checkin <= %s
+          AND checkout > %s
+        LIMIT 1
+    """, (room_num, room_num, check_date, check_date), fetch="one")
+
+    if row:
+        row["checkin"]  = str(row["checkin"])
+        row["checkout"] = str(row["checkout"])
+        if row.get("rooms") is None:
+            row["rooms"] = [row["room"]] if row.get("room") else []
+        return "occupied", row
+    return "available", None
+
+
+def check_overbooking_sql(room_num, checkin_str, checkout_str, exclude_booking_id=None):
+    """
+    Fast SQL overbooking check — uses date index for O(log n) speed.
+    Returns list of conflicting bookings.
+    """
+    if MODE == "offline":
+        from datetime import datetime as dt
+        try:
+            cin  = dt.strptime(checkin_str,  "%Y-%m-%d").date()
+            cout = dt.strptime(checkout_str, "%Y-%m-%d").date()
+        except:
+            return []
+        bookings = _jload(BOOKINGS_FILE, [])
+        conflicts = []
+        for b in bookings:
+            if b.get("status") == "checked-out": continue
+            if exclude_booking_id and b.get("id") == exclude_booking_id: continue
+            rooms_list = b.get("rooms", [b.get("room", "")])
+            if not isinstance(rooms_list, list): rooms_list = [rooms_list]
+            if room_num not in rooms_list: continue
+            try:
+                bcin  = dt.strptime(b["checkin"],  "%Y-%m-%d").date()
+                bcout = dt.strptime(b["checkout"], "%Y-%m-%d").date()
+                if cin < bcout and bcin < cout:
+                    conflicts.append(b)
+            except:
+                pass
+        return conflicts
+
+    sql = """
+        SELECT * FROM bookings
+        WHERE (room = %s OR %s = ANY(rooms))
+          AND status != 'checked-out'
+          AND checkin < %s
+          AND checkout > %s
+    """
+    params = [room_num, room_num, checkout_str, checkin_str]
+    if exclude_booking_id:
+        sql += " AND id != %s"
+        params.append(exclude_booking_id)
+
+    rows = _run(sql, params, fetch="all") or []
+    for r in rows:
+        r["checkin"]  = str(r["checkin"])
+        r["checkout"] = str(r["checkout"])
+        if r.get("rooms") is None:
+            r["rooms"] = [r["room"]] if r.get("room") else []
+    return rows
+
+
+def sync_room_statuses_sql():
+    """
+    Fast SQL room sync — one query per room instead of looping all bookings.
+    """
+    rooms = get_rooms()
+    today = date.today()
+    for r in rooms:
+        if r.get("status") == "cleaning":
+            continue
+        status, _ = get_room_status_on_date_sql(r["num"], today)
+        if r.get("status") != status:
+            update_room_status(r["num"], status)

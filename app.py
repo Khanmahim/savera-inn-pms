@@ -274,60 +274,18 @@ def dates_overlap(cin1, cout1, cin2, cout2):
     return cin1 < cout2 and cin2 < cout1
 
 def get_room_status_on_date(room_num, check_date):
-    """Returns (status, booking) for a room on a given date based on bookings."""
-    for b in st.session_state.bookings:
-        if b.get("status") == "checked-out":
-            continue
-        rooms_list = b.get("rooms", [b.get("room", "")])
-        if not isinstance(rooms_list, list):
-            rooms_list = [rooms_list]
-        if room_num not in rooms_list:
-            continue
-        try:
-            cin  = datetime.strptime(b["checkin"],  "%Y-%m-%d").date()
-            cout = datetime.strptime(b["checkout"], "%Y-%m-%d").date()
-            if cin <= check_date < cout:
-                return "occupied", b
-        except:
-            pass
-    return "available", None
+    """SQL-powered room status check — O(log n) via index."""
+    return DB.get_room_status_on_date_sql(room_num, check_date)
 
 def check_overbooking(room_num, checkin_str, checkout_str, exclude_booking_id=None):
-    """Returns list of conflicting bookings for a room+daterange."""
-    try:
-        cin  = datetime.strptime(checkin_str,  "%Y-%m-%d").date()
-        cout = datetime.strptime(checkout_str, "%Y-%m-%d").date()
-    except:
-        return []
-    conflicts = []
-    for b in st.session_state.bookings:
-        if b.get("status") == "checked-out":
-            continue
-        if exclude_booking_id and b.get("id") == exclude_booking_id:
-            continue
-        rooms_list = b.get("rooms", [b.get("room", "")])
-        if not isinstance(rooms_list, list):
-            rooms_list = [rooms_list]
-        if room_num not in rooms_list:
-            continue
-        try:
-            bcin  = datetime.strptime(b["checkin"],  "%Y-%m-%d").date()
-            bcout = datetime.strptime(b["checkout"], "%Y-%m-%d").date()
-            if dates_overlap(cin, cout, bcin, bcout):
-                conflicts.append(b)
-        except:
-            pass
-    return conflicts
+    """SQL-powered overbooking check — O(log n) via index."""
+    return DB.check_overbooking_sql(room_num, checkin_str, checkout_str, exclude_booking_id)
 
 def sync_room_statuses():
-    """Auto-update room statuses based on today's bookings."""
-    today = date.today()
-    for r in st.session_state.rooms:
-        if r.get("status") == "cleaning":
-            continue
-        status, _ = get_room_status_on_date(r["num"], today)
-        if r.get("status") != status:
-            DB.update_room(r["num"], {"status": status})
+    """SQL-powered room sync — one query per room."""
+    DB.sync_room_statuses_sql()
+    # Refresh cache so UI reflects updated statuses
+    invalidate_cache()
 
 # ── Auto-sync room statuses on every page load ───────────────────────────────
 sync_room_statuses()
