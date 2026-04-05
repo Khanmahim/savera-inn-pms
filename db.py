@@ -215,8 +215,15 @@ def update_room_status(num, status):
 def _fix_booking(b):
     if b.get("rooms") is None:
         b["rooms"] = [b["room"]] if b.get("room") else []
-    b["checkin"]  = str(b["checkin"])
-    b["checkout"] = str(b["checkout"])
+    b["checkin"]       = str(b["checkin"])
+    b["checkout"]      = str(b["checkout"])
+    # Normalize price fields — old bookings may have NULL in DB
+    b["room_price"]      = int(b.get("room_price")      or 0)
+    b["extra_bed_price"] = int(b.get("extra_bed_price") or 0)
+    b["bonfire_price"]   = int(b.get("bonfire_price")   or 0)
+    b["meal_price"]      = int(b.get("meal_price")      or 0)
+    b["advance_paid"]    = int(b.get("advance_paid")    or 0)
+    b["extra_bed_count"] = int(b.get("extra_bed_count") or 0)
     return b
 
 def get_bookings():
@@ -236,8 +243,9 @@ def add_booking(b):
     row = _run("""
         INSERT INTO bookings (guest,phone,room,rooms,agent,checkin,checkout,
              extra_bed,extra_bed_count,season,bonfire,meal_plan,meal_price,
-             advance_paid,advance_method,notes,status,payment_status)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id
+             advance_paid,advance_method,notes,status,payment_status,
+             room_price,extra_bed_price,bonfire_price)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id
     """, (b["guest"],b.get("phone",""),b["room"],b.get("rooms",[b["room"]]),
           b.get("agent",""),b["checkin"],b["checkout"],
           b.get("extra_bed",False),b.get("extra_bed_count",0),
@@ -245,7 +253,9 @@ def add_booking(b):
           b.get("meal_plan","No Meals (Room Only)"),b.get("meal_price",0),
           b.get("advance_paid",0),b.get("advance_method","Cash"),
           b.get("notes",""),b.get("status","confirmed"),
-          b.get("payment_status","unpaid")), fetch="returning")
+          b.get("payment_status","unpaid"),
+          b.get("room_price",0),b.get("extra_bed_price",0),b.get("bonfire_price",0)),
+        fetch="returning")
     return row["id"] if row else None
 
 def update_booking(bid, fields):
