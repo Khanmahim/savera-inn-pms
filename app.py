@@ -1515,48 +1515,63 @@ elif page == "₹  Billing":
                     n_nights = nights(cin_sel, cout_sel)
 
                     # ── Compute charges from booking ──────────────────────────
-                    room_price   = int(b_data.get("room_price", 0))
-                    room_charge  = room_price * n_nights
+                    # Try to get room_price — old bookings may not have it stored
+                    room_price   = int(b_data.get("room_price", 0) or 0)
                     eb_count     = int(b_data.get("extra_bed_count",0)) if b_data.get("extra_bed") else 0
-                    eb_price     = int(b_data.get("extra_bed_price",0))
+                    eb_price     = int(b_data.get("extra_bed_price",0) or 0)
                     extra_charge = eb_price * eb_count * n_nights if eb_count else 0
-                    meal_default = int(b_data.get("meal_price",0)) * n_nights
-                    bonfire_def  = int(b_data.get("bonfire_price",0)) if b_data.get("bonfire") else 0
-                    adv_paid     = sum(b.get("advance_paid",0) for b in stay_bookings)
+                    meal_default = int(b_data.get("meal_price",0) or 0) * n_nights
+                    bonfire_def  = int(b_data.get("bonfire_price",0) or 0) if b_data.get("bonfire") else 0
+                    adv_paid     = sum(int(b.get("advance_paid",0) or 0) for b in stay_bookings)
                     adv_method   = b_data.get("advance_method","Cash")
                     meal_label   = b_data.get("meal_plan","No Meals")
 
                     # ── STEP 3: Summary card ──────────────────────────────────
-                    rooms_str  = ", ".join([f"Room {r}" for r in all_rooms])
+                    rooms_str = ", ".join([f"Room {r}" for r in all_rooms])
 
-                    # ── Clean summary using Streamlit components ───────────────
                     st.markdown("**📋 Billing Summary**")
                     s1, s2, s3 = st.columns(3)
                     s1.info(f"👤 **{selected_name}**")
                     s2.info(f"📅 {cin_sel} → {cout_sel}")
                     s3.info(f"🌙 **{n_nights} nights**")
                     st.info(f"🛏️ **{rooms_str}**")
-
-                    # Charge breakdown
-                    row = []
-                    row.append(f"🏨 Room: {fmt(room_price)}/night × {n_nights} = **{fmt(room_charge)}**")
-                    if extra_charge:  row.append(f"🛏️ Extra Bed: **{fmt(extra_charge)}**")
-                    if meal_default:  row.append(f"🍽️ Meals: **{fmt(meal_default)}**")
-                    if bonfire_def:   row.append(f"🔥 Bonfire: **{fmt(bonfire_def)}**")
-                    if adv_paid:      row.append(f"💳 Advance paid: **{fmt(adv_paid)}**")
-                    for r in row:
-                        st.markdown(f"&nbsp;&nbsp;&nbsp; {r}")
                     st.markdown("---")
 
-                    # ── STEP 4: Extra charges form ────────────────────────────
-                    st.markdown("**➕ Step 3 — Add Extra Charges**")
+                    # ── STEP 4: Charges form ──────────────────────────────────
+                    st.markdown("**➕ Step 3 — Enter / Confirm Charges**")
                     with st.form("bill_form"):
+
+                        # Room price — editable so old bookings can be corrected
+                        st.markdown("**🏨 Room Charges**")
+                        rp1, rp2 = st.columns(2)
+                        room_price_input = rp1.number_input(
+                            "Room Price per Night (₹)",
+                            min_value=0, value=int(room_price), step=100,
+                            help="Pre-filled from booking. Edit if needed."
+                        )
+                        room_charge = room_price_input * n_nights
+                        rp2.metric("Room Total", fmt(room_charge),
+                                   f"{n_nights} nights × {fmt(room_price_input)}")
+
+                        # Extra bed
+                        if eb_count:
+                            eb1, eb2 = st.columns(2)
+                            eb_price_input = eb1.number_input(
+                                f"Extra Bed Price/night (×{eb_count} beds)",
+                                min_value=0, value=int(eb_price), step=50
+                            )
+                            extra_charge = eb_price_input * eb_count * n_nights
+                            eb2.metric("Extra Bed Total", fmt(extra_charge))
+                        else:
+                            extra_charge = 0
+
+                        st.markdown("**➕ Other Charges**")
                         fc1, fc2 = st.columns(2)
-                        food         = fc1.number_input("🍽️ Food & Beverages (Rs.)", min_value=0, value=0, step=50)
-                        bonfire_charge = fc2.number_input("🔥 Bonfire (Rs.)",         min_value=0, value=int(bonfire_def), step=50)
+                        food           = fc1.number_input("🍽️ Food & Beverages (Rs.)", min_value=0, value=0, step=50)
+                        bonfire_charge = fc2.number_input("🔥 Bonfire (Rs.)",          min_value=0, value=int(bonfire_def), step=50)
                         fc3, fc4 = st.columns(2)
-                        meal_charge  = fc3.number_input("🍽️ Meal Plan (Rs.)",         min_value=0, value=int(meal_default), step=50)
-                        other        = fc4.number_input("📦 Other Charges (Rs.)",     min_value=0, value=0, step=50)
+                        meal_charge    = fc3.number_input("🍽️ Meal Plan (Rs.)",        min_value=0, value=int(meal_default), step=50)
+                        other          = fc4.number_input("📦 Other Charges (Rs.)",    min_value=0, value=0, step=50)
 
                         st.markdown("---")
                         advance_deduct = st.number_input(
