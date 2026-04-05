@@ -1467,143 +1467,158 @@ elif page == "₹  Billing":
         else:
             st.subheader("Generate New Bill")
 
-            active_bookings = [b for b in st.session_state.bookings
-                               if b["status"] in ["checked-in","confirmed","checked-out"]]
-            if not active_bookings:
+            all_bookings = [b for b in st.session_state.bookings
+                            if b["status"] in ["checked-in","confirmed","checked-out"]]
+            if not all_bookings:
                 st.warning("No bookings available for billing.")
             else:
-                # ── Step 1: Who to bill ───────────────────────────────────────
-                st.markdown("**Step 1 — Select Booking**")
-                booking_opts = [
-                    f"{b['guest']} — Room(s) {b.get('room','?')} | {b['checkin']} → {b['checkout']} | {b['status'].title()}"
-                    for b in active_bookings
+                # ── STEP 1: Select Customer or Agent ─────────────────────────
+                all_names = sorted(set(
+                    [b["guest"] for b in all_bookings] +
+                    [b["agent"] for b in all_bookings if b.get("agent","").strip()]
+                ))
+                selected_name = st.selectbox("👤 Step 1 — Select Customer / Agent", all_names)
+
+                # Filter bookings for this name
+                customer_bookings = [
+                    b for b in all_bookings
+                    if b["guest"] == selected_name or b.get("agent","") == selected_name
                 ]
-                sel   = st.selectbox("Select Booking", booking_opts)
-                b_idx = booking_opts.index(sel)
-                b_data = active_bookings[b_idx]
 
-                # ── Step 2: Bill under (guest or agent) ───────────────────────
-                st.markdown("**Step 2 — Bill Under**")
-                agent = b_data.get("agent","") or ""
-                bill_under_opts = [b_data["guest"]]
-                if agent:
-                    bill_under_opts.append(f"{agent} (Agent)")
-                bill_under_opts.append("Other (type below)")
-                bill_name_choice = st.radio("Bill to:", bill_under_opts, horizontal=True)
-                if bill_name_choice == "Other (type below)":
-                    bill_name = st.text_input("Enter name")
-                elif "(Agent)" in bill_name_choice:
-                    bill_name = agent
+                if not customer_bookings:
+                    st.warning("No bookings found for this person.")
                 else:
-                    bill_name = b_data["guest"]
+                    # ── STEP 2: Select Stay ───────────────────────────────────
+                    stay_opts = sorted(set([
+                        f"{b['checkin']} → {b['checkout']}"
+                        for b in customer_bookings
+                    ]))
+                    selected_stay = st.selectbox("📅 Step 2 — Select Stay", stay_opts)
+                    cin_sel, cout_sel = selected_stay.split(" → ")
 
-                st.markdown("---")
+                    # Merge ALL bookings for this name + stay (handles multi-room bookings)
+                    stay_bookings = [
+                        b for b in customer_bookings
+                        if b["checkin"] == cin_sel and b["checkout"] == cout_sel
+                    ]
 
-                # ── Pre-compute from booking ───────────────────────────────────
-                rnums_bill  = b_data.get("rooms", [b_data.get("room","")])
-                if not isinstance(rnums_bill, list): rnums_bill = [rnums_bill]
-                n           = nights(b_data["checkin"], b_data["checkout"])
-                room_price  = int(b_data.get("room_price", 0))
-                room_charge = room_price * n
-                eb_count    = int(b_data.get("extra_bed_count",0)) if b_data.get("extra_bed") else 0
-                eb_price    = int(b_data.get("extra_bed_price",0))
-                extra_charge = eb_price * eb_count * n if eb_count else 0
-                meal_default = b_data.get("meal_price",0) * n
-                bonfire_default = int(b_data.get("bonfire_price",0)) if b_data.get("bonfire") else 0
-                adv_paid    = b_data.get("advance_paid",0)
-                meal_label  = b_data.get("meal_plan","No Meals")
-                rooms_str   = ", ".join([f"Room {r}" for r in rnums_bill])
+                    # Collect all rooms across merged bookings
+                    all_rooms = []
+                    for b in stay_bookings:
+                        rms = b.get("rooms", [b.get("room","")])
+                        if not isinstance(rms, list): rms = [rms]
+                        all_rooms.extend([r for r in rms if r])
+                    all_rooms = sorted(set(all_rooms))
 
-                # ── Booking summary card ───────────────────────────────────────
-                st.markdown(f"""
-                <div style='background:#f3eeff;border-radius:10px;padding:14px 18px;
-                            border-left:4px solid #7c3aed;margin-bottom:12px'>
-                    <b>📋 {b_data['guest']}</b> &nbsp;|&nbsp; {rooms_str} &nbsp;|&nbsp;
-                    {b_data['checkin']} → {b_data['checkout']} &nbsp;|&nbsp; <b>{n} nights</b><br>
-                    <span style='font-size:12px;color:#6b21a8'>
-                    🛏️ Room: {fmt(room_price)}/night × {n} = <b>{fmt(room_charge)}</b>
-                    {"&nbsp;&nbsp; 🛏️ Extra Bed: " + fmt(extra_charge) if extra_charge else ""}
-                    {"&nbsp;&nbsp; 🍽️ Meals: " + fmt(meal_default) if meal_default else ""}
-                    {"&nbsp;&nbsp; 🔥 Bonfire: " + fmt(bonfire_default) if bonfire_default else ""}
-                    {"&nbsp;&nbsp; 💳 Advance: " + fmt(adv_paid) if adv_paid else ""}
-                    </span>
-                </div>""", unsafe_allow_html=True)
+                    # Use first booking as base for prices
+                    b_data   = stay_bookings[0]
+                    n_nights = nights(cin_sel, cout_sel)
 
-                # ── Bill form ──────────────────────────────────────────────────
-                st.markdown("**Step 3 — Add Extra Charges**")
-                with st.form("bill_form"):
-                    c1, c2 = st.columns(2)
-                    food        = c1.number_input("🍽️ Food & Beverages (Rs.)", min_value=0, value=0, step=50)
-                    laundry     = c2.number_input("👕 Laundry (Rs.)",          min_value=0, value=0, step=50)
-                    c3, c4 = st.columns(2)
-                    electricity = c3.number_input("💡 Electricity (Rs.)",      min_value=0, value=0, step=50)
-                    bonfire_charge = c4.number_input("🔥 Bonfire (Rs.)",       min_value=0, value=int(bonfire_default), step=50)
-                    c5, c6 = st.columns(2)
-                    meal_charge = c5.number_input("🍽️ Meal Plan (Rs.)",        min_value=0, value=int(meal_default), step=50)
-                    other       = c6.number_input("📦 Other Charges (Rs.)",    min_value=0, value=0, step=50)
+                    # ── Compute charges from booking ──────────────────────────
+                    room_price   = int(b_data.get("room_price", 0))
+                    room_charge  = room_price * n_nights
+                    eb_count     = int(b_data.get("extra_bed_count",0)) if b_data.get("extra_bed") else 0
+                    eb_price     = int(b_data.get("extra_bed_price",0))
+                    extra_charge = eb_price * eb_count * n_nights if eb_count else 0
+                    meal_default = int(b_data.get("meal_price",0)) * n_nights
+                    bonfire_def  = int(b_data.get("bonfire_price",0)) if b_data.get("bonfire") else 0
+                    adv_paid     = sum(b.get("advance_paid",0) for b in stay_bookings)
+                    adv_method   = b_data.get("advance_method","Cash")
+                    meal_label   = b_data.get("meal_plan","No Meals")
 
-                    st.markdown("---")
-                    advance_deduct = st.number_input(
-                        "💳 Advance Already Paid — Deduct (Rs.)",
-                        min_value=0, value=int(adv_paid), step=100
-                    )
+                    # ── STEP 3: Summary card ──────────────────────────────────
+                    rooms_str = ", ".join([f"Room {r}" for r in all_rooms])
+                    st.markdown(f"""
+                    <div style='background:#f3eeff;border-radius:10px;padding:14px 18px;
+                                border-left:4px solid #7c3aed;margin:10px 0'>
+                        <div style='font-size:15px;font-weight:700;color:#3b1f6e;margin-bottom:6px'>
+                            📋 Billing Summary
+                        </div>
+                        <div style='font-size:13px;color:#5b21b6;line-height:2'>
+                            👤 <b>{selected_name}</b> &nbsp;|&nbsp;
+                            📅 {cin_sel} → {cout_sel} &nbsp;|&nbsp;
+                            🌙 <b>{n_nights} nights</b><br>
+                            🛏️ <b>{rooms_str}</b>
+                            {f"&nbsp;|&nbsp; 🏢 Agent: {b_data.get('agent','')}" if b_data.get("agent") and b_data.get("agent") != selected_name else ""}
+                        </div>
+                        <div style='font-size:12px;color:#7c3aed;margin-top:8px'>
+                            🛏️ {fmt(room_price)}/night × {n_nights} = <b>{fmt(room_charge)}</b>
+                            {"&nbsp;&nbsp; 🛏️ Extra Bed: " + fmt(extra_charge) if extra_charge else ""}
+                            {"&nbsp;&nbsp; 🍽️ Meals: " + fmt(meal_default) if meal_default else ""}
+                            {"&nbsp;&nbsp; 🔥 Bonfire: " + fmt(bonfire_def) if bonfire_def else ""}
+                            {"&nbsp;&nbsp; 💳 Advance: " + fmt(adv_paid) if adv_paid else ""}
+                        </div>
+                    </div>""", unsafe_allow_html=True)
 
-                    gross   = room_charge + extra_charge + food + laundry + electricity + bonfire_charge + meal_charge + other
-                    balance = max(0, gross - advance_deduct)
+                    # ── STEP 4: Extra charges form ────────────────────────────
+                    st.markdown("**➕ Step 3 — Add Extra Charges**")
+                    with st.form("bill_form"):
+                        fc1, fc2 = st.columns(2)
+                        food         = fc1.number_input("🍽️ Food & Beverages (Rs.)", min_value=0, value=0, step=50)
+                        bonfire_charge = fc2.number_input("🔥 Bonfire (Rs.)",         min_value=0, value=int(bonfire_def), step=50)
+                        fc3, fc4 = st.columns(2)
+                        meal_charge  = fc3.number_input("🍽️ Meal Plan (Rs.)",         min_value=0, value=int(meal_default), step=50)
+                        other        = fc4.number_input("📦 Other Charges (Rs.)",     min_value=0, value=0, step=50)
 
-                    # ── Live total preview ─────────────────────────────────────
-                    st.markdown("---")
-                    st.markdown("**💰 Bill Summary**")
-                    bc1, bc2, bc3, bc4 = st.columns(4)
-                    bc1.metric("🏨 Room Total",  fmt(room_charge))
-                    bc2.metric("➕ Extras",      fmt(food + laundry + electricity + bonfire_charge + meal_charge + other + extra_charge))
-                    bc3.metric("💰 Gross Total", fmt(gross))
-                    bc4.metric("✅ Balance Due",  fmt(balance),
-                               delta=f"-{fmt(advance_deduct)} advance" if advance_deduct else None,
-                               delta_color="inverse")
+                        st.markdown("---")
+                        advance_deduct = st.number_input(
+                            "💳 Advance Already Paid — Deduct (Rs.)",
+                            min_value=0, value=int(adv_paid), step=100
+                        )
 
-                    # Breakdown line
-                    breakdown = []
-                    if room_charge:    breakdown.append(f"Room {fmt(room_charge)}")
-                    if extra_charge:   breakdown.append(f"Extra Bed {fmt(extra_charge)}")
-                    if meal_charge:    breakdown.append(f"Meals {fmt(meal_charge)}")
-                    if bonfire_charge: breakdown.append(f"Bonfire {fmt(bonfire_charge)}")
-                    if food:           breakdown.append(f"Food {fmt(food)}")
-                    if laundry:        breakdown.append(f"Laundry {fmt(laundry)}")
-                    if electricity:    breakdown.append(f"Electricity {fmt(electricity)}")
-                    if other:          breakdown.append(f"Other {fmt(other)}")
-                    st.caption("  +  ".join(breakdown) + f"  =  {fmt(gross)}")
+                        gross   = room_charge + extra_charge + food + bonfire_charge + meal_charge + other
+                        balance = max(0, gross - advance_deduct)
 
-                    submitted = st.form_submit_button("🧾 Generate Bill", type="primary", use_container_width=True)
-                    if submitted:
-                        new_bill_id = DB.next_bill_id()
-                        require_online()
-                        DB.add_bill({
-                            "bill_id":        new_bill_id,
-                            "guest":          bill_name,
-                            "room":           b_data["room"],
-                            "nights":         n,
-                            "room_charge":    room_charge,
-                            "extra_bed":      extra_charge,
-                            "food":           food,
-                            "laundry":        laundry,
-                            "electricity":    electricity,
-                            "bonfire":        bonfire_charge,
-                            "meal":           meal_charge,
-                            "meal_plan":      meal_label,
-                            "other":          other,
-                            "advance_paid":   advance_deduct,
-                            "advance_method": b_data.get("advance_method","Cash"),
-                            "gross":          gross,
-                            "total":          balance,
-                            "status":         "Pending",
-                            "date":           str(date.today()),
-                            "booking_id":     b_data.get("id"),
-                        })
-                        invalidate_cache()
-                        st.success(f"✅ Bill generated for **{bill_name}** | {rooms_str} | Gross: {fmt(gross)} | Balance Due: {fmt(balance)}")
-                        st.rerun()
+                        # Live totals
+                        st.markdown("---")
+                        t1, t2, t3, t4 = st.columns(4)
+                        t1.metric("🏨 Room",       fmt(room_charge))
+                        t2.metric("➕ Extras",     fmt(food + bonfire_charge + meal_charge + other + extra_charge))
+                        t3.metric("💰 Gross",      fmt(gross))
+                        t4.metric("✅ Balance Due", fmt(balance),
+                                  delta=f"-{fmt(advance_deduct)} advance" if advance_deduct else None,
+                                  delta_color="inverse")
 
+                        # Breakdown
+                        parts = []
+                        if room_charge:    parts.append(f"Room {fmt(room_charge)}")
+                        if extra_charge:   parts.append(f"Extra Bed {fmt(extra_charge)}")
+                        if meal_charge:    parts.append(f"Meals {fmt(meal_charge)}")
+                        if bonfire_charge: parts.append(f"Bonfire {fmt(bonfire_charge)}")
+                        if food:           parts.append(f"Food {fmt(food)}")
+                        if other:          parts.append(f"Other {fmt(other)}")
+                        if parts:
+                            st.caption("  +  ".join(parts) + f"  =  Gross {fmt(gross)}")
+
+                        submitted = st.form_submit_button("🧾 Generate Bill", type="primary", use_container_width=True)
+                        if submitted:
+                            require_online()
+                            new_bill_id = DB.next_bill_id()
+                            DB.add_bill({
+                                "bill_id":        new_bill_id,
+                                "guest":          selected_name,
+                                "room":           ", ".join(all_rooms),
+                                "nights":         n_nights,
+                                "room_charge":    room_charge,
+                                "extra_bed":      extra_charge,
+                                "food":           food,
+                                "laundry":        0,
+                                "electricity":    0,
+                                "bonfire":        bonfire_charge,
+                                "meal":           meal_charge,
+                                "meal_plan":      meal_label,
+                                "other":          other,
+                                "advance_paid":   advance_deduct,
+                                "advance_method": adv_method,
+                                "gross":          gross,
+                                "total":          balance,
+                                "status":         "Pending",
+                                "date":           str(date.today()),
+                                "booking_id":     b_data.get("id"),
+                            })
+                            invalidate_cache()
+                            st.success(f"✅ Bill generated for **{selected_name}** | {rooms_str} | Gross: {fmt(gross)} | Balance Due: {fmt(balance)}")
+                            st.rerun()
 # ═══════════════════════════════════════════════════════════════════════════════
 # PAGE: EXPENSES
 # ═══════════════════════════════════════════════════════════════════════════════
