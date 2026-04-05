@@ -108,6 +108,26 @@ def setup_tables():
                     guest TEXT, room TEXT, amount INTEGER DEFAULT 0,
                     method TEXT, type TEXT, date DATE, note TEXT DEFAULT ''
                 );
+
+                -- ── Indexes for faster queries ────────────────────────────────
+                CREATE INDEX IF NOT EXISTS idx_bookings_dates
+                    ON bookings (checkin, checkout);
+                CREATE INDEX IF NOT EXISTS idx_bookings_room
+                    ON bookings (room);
+                CREATE INDEX IF NOT EXISTS idx_bookings_status
+                    ON bookings (status);
+                CREATE INDEX IF NOT EXISTS idx_bookings_guest
+                    ON bookings (guest);
+                CREATE INDEX IF NOT EXISTS idx_payments_booking
+                    ON payments (booking_id);
+                CREATE INDEX IF NOT EXISTS idx_payments_bill
+                    ON payments (bill_id);
+                CREATE INDEX IF NOT EXISTS idx_bills_guest
+                    ON bills (guest);
+                CREATE INDEX IF NOT EXISTS idx_expenses_date
+                    ON expenses (date);
+                CREATE INDEX IF NOT EXISTS idx_expenses_category
+                    ON expenses (category);
                 """)
     finally:
         conn.close()
