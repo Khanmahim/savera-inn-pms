@@ -227,7 +227,7 @@ def lock(action, message=None):
     return False
 
 # ── Load all data from PostgreSQL ────────────────────────────────────────────
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=120)
 def load_all_cached():
     """Cached DB fetch — only hits Supabase every 30 seconds, not on every click."""
     return {
@@ -246,11 +246,22 @@ def load_all():
     st.session_state.bills    = data["bills"]
     st.session_state.expenses = data["expenses"]
     st.session_state.payments = data["payments"]
+    # Cache unread count alongside data — no extra DB hit per render
+    if DB.MODE == "online":
+        try:
+            st.session_state.unread_count = DB.get_unread_count()
+        except Exception:
+            st.session_state.unread_count = 0
 
 def invalidate_cache():
-    """Call after any write to force fresh DB fetch on next load."""
+    """Clear cache and reload — called after writes."""
     load_all_cached.clear()
     load_all()
+    if DB.MODE == "online":
+        try:
+            st.session_state.unread_count = DB.get_unread_count()
+        except Exception:
+            pass
 
 def persist():
     pass  # Data is written directly to DB — kept for compatibility
@@ -290,8 +301,13 @@ def sync_room_statuses():
     # Refresh cache so UI reflects updated statuses
     invalidate_cache()
 
-# ── Auto-sync room statuses on every page load ───────────────────────────────
-sync_room_statuses()
+# ── Sync room statuses once per day only (not every click) ──────────────────
+if "last_sync_day" not in st.session_state or \
+   st.session_state.last_sync_day != str(date.today()):
+    if DB.MODE == "online":
+        DB.sync_room_statuses_sql()
+        invalidate_cache()
+    st.session_state.last_sync_day = str(date.today())
 
 # ── Custom CSS ────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -353,9 +369,9 @@ with st.sidebar:
     page = st.radio("Navigate", allowed_pages(), label_visibility="collapsed")
     st.markdown("---")
 
-    # ── Notification bell with unread count ───────────────────────────────────
+    # ── Notification bell with unread count (cached, not live DB hit) ───────────
     if DB.MODE == "online":
-        unread = DB.get_unread_count()
+        unread = st.session_state.get("unread_count", 0)
         if unread > 0:
             st.markdown(f"""
             <div style='background:#dc2626;color:white;border-radius:8px;
@@ -368,7 +384,7 @@ with st.sidebar:
     import time
     now = time.time()
     last_refresh = st.session_state.get("last_refresh", 0)
-    if now - last_refresh > 30:
+    if now - last_refresh > 120:
         invalidate_cache()
         st.session_state.last_refresh = now
 
@@ -388,14 +404,12 @@ with st.sidebar:
             st.session_state.pop(key, None)
         st.rerun()
 
-# ── Auto-generate smart alerts once per day ──────────────────────────────────
+# ── Smart alerts generated once per day in background ────────────────────────
 if DB.MODE == "online":
-    last_alert_day = st.session_state.get("last_alert_day", "")
-    today_str      = str(date.today())
-    if last_alert_day != today_str:
+    if st.session_state.get("last_alert_day") != str(date.today()):
+        st.session_state.last_alert_day = str(date.today())
         try:
             DB.generate_smart_alerts()
-            st.session_state.last_alert_day = today_str
         except Exception:
             pass
 
@@ -888,7 +902,6 @@ elif page == "📋 Bookings":
                                     "method": advance_method, "type": "advance",
                                     "date": str(date.today()), "note": "Advance at booking",
                                 })
-                            sync_room_statuses()
                             if DB.MODE == "online":
                                 DB.create_notification(
                                     f"📋 New booking: {guest} — Room(s) {', '.join(rnums)} | {checkin} → {checkout}",

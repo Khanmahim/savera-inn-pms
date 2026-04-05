@@ -35,9 +35,32 @@ def _jsave(path, data):
         json.dump(data, f, indent=2, default=str)
 
 # ── PostgreSQL helpers ────────────────────────────────────────────────────────
+# ── Connection pool — reuse connections instead of opening new ones each time ──
+_pool = None
+
+def _get_pool():
+    global _pool
+    if _pool is None:
+        import psycopg2.pool
+        _pool = psycopg2.pool.SimpleConnectionPool(
+            minconn=1, maxconn=5,
+            dsn=_DB_URL, connect_timeout=10
+        )
+    return _pool
+
 def _conn():
     import psycopg2
-    return psycopg2.connect(_DB_URL, connect_timeout=10)
+    try:
+        return _get_pool().getconn()
+    except Exception:
+        return psycopg2.connect(_DB_URL, connect_timeout=10)
+
+def _release(conn):
+    try:
+        _get_pool().putconn(conn)
+    except Exception:
+        try: conn.close()
+        except Exception: pass
 
 def _run(sql, params=(), fetch=None):
     import psycopg2.extras
@@ -52,7 +75,7 @@ def _run(sql, params=(), fetch=None):
                     row = cur.fetchone()
                     return dict(row) if row else None
     finally:
-        conn.close()
+        _release(conn)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TABLE SETUP
