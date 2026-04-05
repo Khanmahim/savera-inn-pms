@@ -549,13 +549,63 @@ if page == "📊 Dashboard":
         )
 
     with col2:
-        st.subheader("Recent Bookings")
-        if bookings:
-            df = pd.DataFrame(bookings)[["guest", "room", "checkin", "checkout", "status"]].tail(8)
-            df.columns = ["Guest", "Room", "Check-in", "Check-out", "Status"]
-            st.dataframe(df, use_container_width=True, hide_index=True)
+        st.subheader("📅 Today's Activity")
+        today_str = str(date.today())
+
+        checkins_today  = [b for b in bookings
+                           if b.get("checkin")  == today_str
+                           and b.get("status") != "checked-out"]
+        checkouts_today = [b for b in bookings
+                           if b.get("checkout") == today_str
+                           and b.get("status") in ("checked-in", "confirmed")]
+        overdue         = [b for b in bookings
+                           if b.get("checkout","") < today_str
+                           and b.get("status") == "checked-in"]
+
+        if not checkins_today and not checkouts_today and not overdue:
+            st.info("No check-ins or check-outs today.")
         else:
-            st.info("No bookings yet.")
+            # ── Check-ins today ───────────────────────────────────────────────
+            if checkins_today:
+                st.markdown("**🟢 Check-ins Today**")
+                for b in checkins_today:
+                    rms = ", ".join(b.get("rooms", [b.get("room","")])) if isinstance(b.get("rooms"), list) else b.get("room","")
+                    st.markdown(f"""
+                    <div style='background:#d1fae5;border-radius:8px;padding:8px 12px;
+                                margin-bottom:6px;border-left:4px solid #059669'>
+                        <b>Room {rms}</b> — {b["guest"]}
+                        <span style='float:right;font-size:12px;color:#065f46'>
+                            🛎️ Arriving today
+                        </span>
+                    </div>""", unsafe_allow_html=True)
+
+            # ── Check-outs today ──────────────────────────────────────────────
+            if checkouts_today:
+                st.markdown("**🔴 Check-outs Today**")
+                for b in checkouts_today:
+                    rms = ", ".join(b.get("rooms", [b.get("room","")])) if isinstance(b.get("rooms"), list) else b.get("room","")
+                    st.markdown(f"""
+                    <div style='background:#fee2e2;border-radius:8px;padding:8px 12px;
+                                margin-bottom:6px;border-left:4px solid #dc2626'>
+                        <b>Room {rms}</b> — {b["guest"]}
+                        <span style='float:right;font-size:12px;color:#991b1b'>
+                            🚪 Departing today
+                        </span>
+                    </div>""", unsafe_allow_html=True)
+
+            # ── Overdue checkouts ─────────────────────────────────────────────
+            if overdue:
+                st.markdown("**⚠️ Overdue Checkouts**")
+                for b in overdue:
+                    rms = ", ".join(b.get("rooms", [b.get("room","")])) if isinstance(b.get("rooms"), list) else b.get("room","")
+                    st.markdown(f"""
+                    <div style='background:#fef3c7;border-radius:8px;padding:8px 12px;
+                                margin-bottom:6px;border-left:4px solid #f59e0b'>
+                        <b>Room {rms}</b> — {b["guest"]}
+                        <span style='float:right;font-size:12px;color:#92400e'>
+                            ⚠️ Was due {b["checkout"]}
+                        </span>
+                    </div>""", unsafe_allow_html=True)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PAGE: ROOMS
