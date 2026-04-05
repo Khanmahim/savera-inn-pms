@@ -1063,7 +1063,7 @@ elif page == "📋 Bookings":
                 st.markdown("---")
                 st.markdown("**🔥 Bonfire**")
                 bonfire_price = st.number_input(
-                    "Bonfire Charge (₹/night) — leave 0 if not required",
+                    "Bonfire Charge (₹ fixed) — leave 0 if not required",
                     min_value=0, value=0, step=50
                 )
                 bonfire_requested = bonfire_price > 0
@@ -1078,7 +1078,7 @@ elif page == "📋 Bookings":
                     est_room    = room_price_per_night * n_nights
                     est_eb      = (extra_bed_price * (int(extra_bed_count) if extra_bed and extra_bed_count != "0 (None)" else 0) * n_nights) if extra_bed else 0
                     est_meal    = meal_price * n_nights
-                    est_bonfire = bonfire_price * n_nights
+                    est_bonfire = bonfire_price  # Fixed lump sum, not per night
                     est_total   = est_room + est_eb + est_meal + est_bonfire
 
                     ec1, ec2, ec3, ec4, ec5 = st.columns(5)
@@ -1155,10 +1155,10 @@ elif page == "📋 Bookings":
                             est_final = (room_price_per_night * n_nights_final +
                                          (extra_bed_price * (int(extra_bed_count) if extra_bed and extra_bed_count != "0 (None)" else 0) * n_nights_final if extra_bed else 0) +
                                          meal_price * n_nights_final +
-                                         bonfire_price * n_nights_final)
+                                         bonfire_price)  # Fixed lump sum
                             msg = f"✅ Booking confirmed for **{guest}** — Room(s) {', '.join(rnums)} | {checkin} → {checkout}"
                             if extra_bed and extra_bed_count != "0 (None)": msg += f" | 🛏️ {extra_bed_count} Extra Bed(s)"
-                            if bonfire_requested: msg += f" | 🔥 Bonfire: {fmt(bonfire_price)}/night"
+                            if bonfire_requested: msg += f" | 🔥 Bonfire: {fmt(bonfire_price)}"
                             if meal_plan != "No Meals (Room Only)": msg += f" | 🍽️ {meal_plan.split('(')[0].strip()}"
                             if advance_paid > 0:  msg += f" | 💳 Advance: {fmt(advance_paid)}"
                             msg += f" | 💰 Est. Total: {fmt(est_final)}"
@@ -1488,7 +1488,7 @@ elif page == "₹  Billing":
             meal_default = b_data.get("meal_price", 0) * n if b_data.get("meal_price", 0) else 0
             adv_paid     = b_data.get("advance_paid", 0)
             meal_label   = b_data.get("meal_plan", "No Meals")
-            bonfire_default = int(b_data.get("bonfire_price", 0)) * n if b_data.get("bonfire") else 0
+            bonfire_default = int(b_data.get("bonfire_price", 0)) if b_data.get("bonfire") else 0  # Fixed lump sum
 
             rooms_info = ", ".join([f"Room {rn}" for rn in rnums_bill])
             st.markdown(f"**{n} nights** | {rooms_info} | {fmt(room_price)}/night = **{fmt(room_charge)}**")
@@ -1497,7 +1497,7 @@ elif page == "₹  Billing":
             elif b_data.get("extra_bed") and eb_count:
                 st.markdown(f"⚠️ Extra bed price not set — please enter below")
             if bonfire_default:
-                st.markdown(f"🔥 Bonfire: {n} nights × {fmt(b_data.get('bonfire_price',0))}/night = **{fmt(bonfire_default)}**")
+                st.markdown(f"🔥 Bonfire (fixed charge): **{fmt(bonfire_default)}**")
             if meal_default:
                 st.markdown(f"Meals ({meal_label}): {n} days × {fmt(b_data.get('meal_price',0))}/day = **{fmt(meal_default)}**")
             if adv_paid:
