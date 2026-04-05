@@ -224,18 +224,35 @@ def lock(action, message=None):
     return False
 
 # ── Load all data from PostgreSQL ────────────────────────────────────────────
+@st.cache_data(ttl=30)
+def load_all_cached():
+    """Cached DB fetch — only hits Supabase every 30 seconds, not on every click."""
+    return {
+        "rooms":    DB.get_rooms(),
+        "bookings": DB.get_bookings(),
+        "bills":    DB.get_bills(),
+        "expenses": DB.get_expenses(),
+        "payments": DB.get_payments(),
+    }
+
 def load_all():
-    """Load all data fresh from database into session state."""
-    st.session_state.rooms    = DB.get_rooms()
-    st.session_state.bookings = DB.get_bookings()
-    st.session_state.bills    = DB.get_bills()
-    st.session_state.expenses = DB.get_expenses()
-    st.session_state.payments = DB.get_payments()
+    """Load data into session state from cache."""
+    data = load_all_cached()
+    st.session_state.rooms    = data["rooms"]
+    st.session_state.bookings = data["bookings"]
+    st.session_state.bills    = data["bills"]
+    st.session_state.expenses = data["expenses"]
+    st.session_state.payments = data["payments"]
+
+def invalidate_cache():
+    """Call after any write to force fresh DB fetch on next load."""
+    load_all_cached.clear()
+    load_all()
 
 def persist():
     pass  # Data is written directly to DB — kept for compatibility
 
-# ── Only load from DB once per session, not on every click ───────────────────
+# ── Load data on first render ─────────────────────────────────────────────────
 if "data_loaded" not in st.session_state:
     load_all()
     st.session_state.data_loaded = True
@@ -379,15 +396,13 @@ with st.sidebar:
     import time
     now = time.time()
     last_refresh = st.session_state.get("last_refresh", 0)
-    if now - last_refresh > 60:
-        st.session_state.data_loaded = False
-        load_all()
+    if now - last_refresh > 30:
+        invalidate_cache()
         st.session_state.last_refresh = now
 
     # ── Manual refresh button ─────────────────────────────────────────────────
     if st.button("🔄 Refresh Data", use_container_width=True):
-        st.session_state.data_loaded = False
-        load_all()
+        invalidate_cache()
         st.session_state.last_refresh = time.time()
         st.success("✅ Data refreshed!")
 
@@ -579,8 +594,7 @@ elif page == "🛏️ Rooms":
                         if sc1.button("🔄", key=f"tog_{r['num']}", help=f"Set to {next_manual}"):
                             require_online()
                             DB.update_room(r["num"], {"status": next_manual})
-                            st.session_state.data_loaded = False
-                            load_all()
+                            invalidate_cache()
                             st.rerun()
                     if can("edit_room") and sc2.button("✏️", key=f"edit_r_{r['num']}", help="Edit room"):
                         st.session_state["edit_room"] = r["num"]
@@ -588,8 +602,7 @@ elif page == "🛏️ Rooms":
                     if can("delete_room") and sc3.button("🗑️", key=f"del_{r['num']}"):
                         require_online()
                         DB.delete_room(r["num"])
-                        st.session_state.data_loaded = False
-                        load_all()
+                        invalidate_cache()
                         st.rerun()
                 # ── Inline edit form ──────────────────────────────────────────
                 if st.session_state.get("edit_room") == r["num"]:
@@ -727,7 +740,7 @@ elif page == "📋 Bookings":
                     d1.write(f"🍽️ **Meal Plan:** {b.get('meal_plan', 'No Meals')}")
                     eb_txt = f"Yes × {b.get('extra_bed_count', 1)} bed(s) @ {fmt(b.get('extra_bed_price',0))}/night" if b.get('extra_bed') else 'No'
                     d2.write(f"🛏️ **Extra Bed:** {eb_txt}")
-                    d2.write(f"🔥 **Bonfire:** {'Yes' if b.get('bonfire') else 'No'}")
+                    d2.write(f"🔥 **Bonfire:** {'Yes @ ' + fmt(b.get('bonfire_price',0)) + '/night' if b.get('bonfire') else 'No'}")
                     adv = b.get('advance_paid', 0)
                     d2.write(f"💳 **Advance:** {fmt(adv) + ' (' + b.get('advance_method','Cash') + ')' if adv else 'None'}")
                     rooms_list = b.get('rooms', [b.get('room','—')])
@@ -843,18 +856,9 @@ elif page == "📋 Bookings":
                 advance_method = dp.selectbox("Payment Method", ["Cash", "UPI", "Bank Transfer", "Card", "Online"])
 
                 st.markdown("---")
-                st.markdown("**🔥 Bonfire**")
-                Bonfire       = st.checkbox("🔥 Bonfire Requested?")
-                eb1, eb2 = st.columns(2)
-                Bonfire_nights = eb1.selectbox("Number of Bonfire Nights", ["0 (None)", "1", "2", "3", "4"])
-                Bonfire_nights_price = eb2.number_input("Bonfire Charge (₹/night)", min_value=0, value=500, step=50)
-
-
-                
-
-
-
-
+                bf1, bf2 = st.columns(2)
+                bonfire_requested = bf1.checkbox("🔥 Bonfire Requested?")
+                bonfire_price     = bf2.number_input("Bonfire Charge (₹/night)", min_value=0, value=800, step=50) if bonfire_requested else 0
                 notes     = st.text_area("Notes / Special Requests", height=80)
                 submitted = st.form_submit_button("✅ Confirm Booking", use_container_width=True)
                 if submitted:
@@ -888,6 +892,7 @@ elif page == "📋 Bookings":
                                 "extra_bed_price": extra_bed_price if extra_bed else 0,
                                 "room_price": room_price_per_night,
                                 "season": season, "bonfire": bonfire_requested,
+                                "bonfire_price": bonfire_price,
                                 "meal_plan": meal_plan, "meal_price": meal_price,
                                 "advance_paid": advance_paid, "advance_method": advance_method,
                                 "notes": notes, "status": "confirmed",
@@ -903,7 +908,7 @@ elif page == "📋 Bookings":
                             sync_room_statuses()
                             msg = f"✅ Booking confirmed for **{guest}** — Room(s) {', '.join(rnums)} | {checkin} → {checkout}"
                             if extra_bed and extra_bed_count != "0 (None)": msg += f" | 🛏️ {extra_bed_count} Extra Bed(s)"
-                            if bonfire_requested: msg += " | 🔥 Bonfire"
+                            if bonfire_requested: msg += f" | 🔥 Bonfire: {fmt(bonfire_price)}/night"
                             if meal_plan != "No Meals (Room Only)": msg += f" | 🍽️ {meal_plan.split('(')[0].strip()}"
                             if advance_paid > 0:  msg += f" | 💳 Advance: Rs.{advance_paid:,} ({advance_method})"
                             st.success(msg)
@@ -1231,6 +1236,7 @@ elif page == "₹  Billing":
             meal_default = b_data.get("meal_price", 0) * n if b_data.get("meal_price", 0) else 0
             adv_paid     = b_data.get("advance_paid", 0)
             meal_label   = b_data.get("meal_plan", "No Meals")
+            bonfire_default = int(b_data.get("bonfire_price", 0)) * n if b_data.get("bonfire") else 0
 
             rooms_info = ", ".join([f"Room {rn}" for rn in rnums_bill])
             st.markdown(f"**{n} nights** | {rooms_info} | {fmt(room_price)}/night = **{fmt(room_charge)}**")
@@ -1238,6 +1244,8 @@ elif page == "₹  Billing":
                 st.markdown(f"Extra beds: {eb_count} × {n} nights × {fmt(eb_price)}/night = **{fmt(extra_charge)}**")
             elif b_data.get("extra_bed") and eb_count:
                 st.markdown(f"⚠️ Extra bed price not set — please enter below")
+            if bonfire_default:
+                st.markdown(f"🔥 Bonfire: {n} nights × {fmt(b_data.get('bonfire_price',0))}/night = **{fmt(bonfire_default)}**")
             if meal_default:
                 st.markdown(f"Meals ({meal_label}): {n} days × {fmt(b_data.get('meal_price',0))}/day = **{fmt(meal_default)}**")
             if adv_paid:
@@ -1249,7 +1257,7 @@ elif page == "₹  Billing":
                 laundry = c2.number_input("👕 Laundry Charges (Rs.)", min_value=0, value=0, step=50)
                 c3, c4 = st.columns(2)
                 electricity    = c3.number_input("💡 Electricity Charges (Rs.)", min_value=0, value=0, step=50)
-                bonfire_charge = c4.number_input("🔥 Bonfire Charges (Rs.)",     min_value=0, value=0, step=50)
+                bonfire_charge = c4.number_input("🔥 Bonfire Charges (Rs.)", min_value=0, value=int(bonfire_default), step=50)
                 c5, c6 = st.columns(2)
                 meal_charge = c5.number_input("🍽️ Meal Charges (Rs.)", min_value=0, value=int(meal_default), step=50)
                 other       = c6.number_input("📦 Other Charges (Rs.)", min_value=0, value=0, step=50)
@@ -1343,8 +1351,7 @@ elif page == "🧾 Expenses":
                     if can("add_expense") and a2.button("🗑️", key=f"del_e_{e['id']}", help="Delete"):
                         require_online()
                         DB.delete_expense(e["id"])
-                        st.session_state.data_loaded = False
-                        load_all()
+                        invalidate_cache()
                         st.success("Expense deleted!")
                         st.rerun()
 
@@ -1370,8 +1377,7 @@ elif page == "🧾 Expenses":
                                 "date": str(new_date), "description": new_desc
                             })
                             st.session_state.pop("edit_expense", None)
-                            st.session_state.data_loaded = False
-                            load_all()
+                            invalidate_cache()
                             st.success("✅ Expense updated!")
                             st.rerun()
                         if do_cancel:
@@ -1402,8 +1408,7 @@ elif page == "🧾 Expenses":
                             "date": str(exp_date),
                             "category": category, "desc": desc, "amount": amount
                         })
-                        st.session_state.data_loaded = False
-                        load_all()
+                        invalidate_cache()
                         st.success(f"✅ Expense of {fmt(amount)} added!")
                         st.rerun()
 
@@ -1459,8 +1464,7 @@ elif page == "🧾 Expenses":
                             require_online()
                             for row in preview_rows:
                                 DB.add_expense(row)
-                            st.session_state.data_loaded = False
-                            load_all()
+                            invalidate_cache()
                             st.success(f"🎉 Imported {len(preview_rows)} expenses!")
                             st.balloons()
                             st.rerun()
@@ -1537,8 +1541,7 @@ elif page == "💳 Payments":
                     if st.button("🗑️", key=f"del_p_{p['id']}", help="Delete"):
                         require_online()
                         DB.delete_payment(p["id"])
-                        st.session_state.data_loaded = False
-                        load_all()
+                        invalidate_cache()
                         st.success("Payment deleted!")
                         st.rerun()
 
@@ -1574,8 +1577,7 @@ elif page == "💳 Payments":
                                 "note": new_note,
                             })
                             st.session_state.pop("edit_payment", None)
-                            st.session_state.data_loaded = False
-                            load_all()
+                            invalidate_cache()
                             st.success("✅ Payment updated!")
                             st.rerun()
                         if do_cancel:
@@ -1684,8 +1686,7 @@ elif page == "💳 Payments":
                             "date":       str(ref_date),
                             "note":       ref_reason,
                         })
-                        st.session_state.data_loaded = False
-                        load_all()
+                        invalidate_cache()
                         st.success(f"✅ Refund of {fmt(ref_amount)} issued to {bk_obj['guest']}!")
                         st.rerun()
 
