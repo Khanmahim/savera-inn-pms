@@ -108,6 +108,19 @@ def setup_tables():
                     guest TEXT, room TEXT, amount INTEGER DEFAULT 0,
                     method TEXT, type TEXT, date DATE, note TEXT DEFAULT ''
                 );
+                CREATE TABLE IF NOT EXISTS notifications (
+                    id SERIAL PRIMARY KEY,
+                    message TEXT NOT NULL,
+                    type TEXT DEFAULT 'info',
+                    category TEXT DEFAULT 'general',
+                    is_read BOOLEAN DEFAULT FALSE,
+                    booking_id INTEGER,
+                    created_at TIMESTAMP DEFAULT NOW()
+                );
+                CREATE INDEX IF NOT EXISTS idx_notifications_read
+                    ON notifications (is_read);
+                CREATE INDEX IF NOT EXISTS idx_notifications_created
+                    ON notifications (created_at DESC);
 
                 -- ── Indexes for faster queries ────────────────────────────────
                 CREATE INDEX IF NOT EXISTS idx_bookings_dates
@@ -467,3 +480,165 @@ def sync_room_statuses_sql():
         status, _ = get_room_status_on_date_sql(r["num"], today)
         if r.get("status") != status:
             update_room_status(r["num"], status)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# NOTIFICATIONS
+# ══════════════════════════════════════════════════════════════════════════════
+NOTIF_FILE = Path("data/notifications.json")
+
+def create_notification(message, notif_type="info", category="general", booking_id=None):
+    """
+    notif_type: 'info' | 'warning' | 'critical'
+    category:   'checkin' | 'checkout' | 'payment' | 'booking' | 'housekeeping' | 'general'
+    """
+    if MODE == "offline":
+        notifs = _jload(NOTIF_FILE, [])
+        new_id = max((n["id"] for n in notifs), default=0) + 1
+        notifs.insert(0, {
+            "id": new_id, "message": message, "type": notif_type,
+            "category": category, "is_read": False,
+            "booking_id": booking_id,
+            "created_at": str(date.today())
+        })
+        _jsave(NOTIF_FILE, notifs)
+        return
+    _run("""INSERT INTO notifications (message, type, category, booking_id)
+            VALUES (%s, %s, %s, %s)""",
+         (message, notif_type, category, booking_id))
+
+def get_notifications(limit=50):
+    if MODE == "offline":
+        return _jload(NOTIF_FILE, [])[:limit]
+    rows = _run("""SELECT * FROM notifications
+                   ORDER BY created_at DESC LIMIT %s""",
+                (limit,), fetch="all") or []
+    for r in rows:
+        r["created_at"] = str(r["created_at"])[:16]  # trim seconds
+    return rows
+
+def get_unread_count():
+    if MODE == "offline":
+        return sum(1 for n in _jload(NOTIF_FILE, []) if not n.get("is_read"))
+    row = _run("SELECT COUNT(*) as cnt FROM notifications WHERE is_read = FALSE",
+               fetch="one")
+    return row["cnt"] if row else 0
+
+def mark_notification_read(nid):
+    if MODE == "offline":
+        notifs = _jload(NOTIF_FILE, [])
+        for n in notifs:
+            if n["id"] == nid:
+                n["is_read"] = True
+        _jsave(NOTIF_FILE, notifs)
+        return
+    _run("UPDATE notifications SET is_read = TRUE WHERE id = %s", (nid,))
+
+def mark_all_read():
+    if MODE == "offline":
+        notifs = _jload(NOTIF_FILE, [])
+        for n in notifs:
+            n["is_read"] = True
+        _jsave(NOTIF_FILE, notifs)
+        return
+    _run("UPDATE notifications SET is_read = TRUE")
+
+def delete_notification(nid):
+    if MODE == "offline":
+        notifs = _jload(NOTIF_FILE, [])
+        _jsave(NOTIF_FILE, [n for n in notifs if n["id"] != nid])
+        return
+    _run("DELETE FROM notifications WHERE id = %s", (nid,))
+
+def clear_all_notifications():
+    if MODE == "offline":
+        _jsave(NOTIF_FILE, [])
+        return
+    _run("DELETE FROM notifications")
+
+def generate_smart_alerts():
+    """
+    Auto-generate notifications for today's hotel operations.
+    Call once per day or on manual refresh.
+    Avoids duplicates by checking if same message exists today.
+    """
+    today = date.today()
+    today_str = str(today)
+
+    def already_exists(msg_fragment):
+        if MODE == "offline":
+            notifs = _jload(NOTIF_FILE, [])
+            return any(msg_fragment in n.get("message","") and
+                       today_str in n.get("created_at","")
+                       for n in notifs)
+        row = _run("""SELECT id FROM notifications
+                      WHERE message ILIKE %s
+                      AND DATE(created_at) = %s LIMIT 1""",
+                   (f"%{msg_fragment}%", today), fetch="one")
+        return row is not None
+
+    # ── Check-ins today ───────────────────────────────────────────────────────
+    if MODE == "online":
+        checkins = _run("""SELECT guest, room FROM bookings
+                           WHERE checkin = %s AND status = 'confirmed'""",
+                        (today,), fetch="all") or []
+    else:
+        from datetime import datetime as dt
+        all_b = _jload(BOOKINGS_FILE, [])
+        checkins = [b for b in all_b
+                    if b.get("checkin") == today_str and b.get("status") == "confirmed"]
+
+    if checkins and not already_exists("check-in today"):
+        names = ", ".join(b["guest"] for b in checkins[:3])
+        extra = f" +{len(checkins)-3} more" if len(checkins) > 3 else ""
+        create_notification(
+            f"🟡 {len(checkins)} check-in{'s' if len(checkins)>1 else ''} today: {names}{extra}",
+            "warning", "checkin"
+        )
+
+    # ── Check-outs today ──────────────────────────────────────────────────────
+    if MODE == "online":
+        checkouts = _run("""SELECT guest, room FROM bookings
+                            WHERE checkout = %s AND status = 'checked-in'""",
+                         (today,), fetch="all") or []
+    else:
+        checkouts = [b for b in all_b
+                     if b.get("checkout") == today_str and b.get("status") == "checked-in"]
+
+    if checkouts and not already_exists("checkout today"):
+        names = ", ".join(b["guest"] for b in checkouts[:3])
+        extra = f" +{len(checkouts)-3} more" if len(checkouts) > 3 else ""
+        create_notification(
+            f"🔴 {len(checkouts)} checkout{'s' if len(checkouts)>1 else ''} today: {names}{extra}",
+            "critical", "checkout"
+        )
+
+    # ── Overdue checkouts ─────────────────────────────────────────────────────
+    if MODE == "online":
+        overdue = _run("""SELECT guest, room, checkout FROM bookings
+                          WHERE checkout < %s AND status = 'checked-in'""",
+                       (today,), fetch="all") or []
+    else:
+        from datetime import datetime as dt
+        overdue = [b for b in all_b
+                   if b.get("checkout","") < today_str and b.get("status") == "checked-in"]
+
+    if overdue and not already_exists("overdue checkout"):
+        names = ", ".join(b["guest"] for b in overdue[:3])
+        create_notification(
+            f"🔴 {len(overdue)} overdue checkout{'s' if len(overdue)>1 else ''}: {names}",
+            "critical", "checkout"
+        )
+
+    # ── Pending payments (bills not paid after checkout) ──────────────────────
+    if MODE == "online":
+        pending_bills = _run("""SELECT guest, room FROM bills
+                                WHERE status = 'Pending'""",
+                             fetch="all") or []
+    else:
+        pending_bills = [b for b in _jload(BILLS_FILE, []) if b.get("status") == "Pending"]
+
+    if pending_bills and not already_exists("pending payment"):
+        create_notification(
+            f"💳 {len(pending_bills)} pending payment{'s' if len(pending_bills)>1 else ''} — bills not yet settled",
+            "warning", "payment"
+        )

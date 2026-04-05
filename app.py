@@ -197,10 +197,13 @@ def can(action):
 def allowed_pages():
     """Return list of pages the current user can see in the sidebar."""
     role = st.session_state.get("user_role", "staff")
+    base = ["📊 Dashboard","🛏️ Rooms","📋 Bookings","📅 Calendar",
+            "₹  Billing","💳 Payments","🧾 Expenses","📈 Reports",
+            "👥 Guests (CRM)","🔔 Notifications"]
     if role == "admin":
-        return ["📊 Dashboard","🛏️ Rooms","📋 Bookings","📅 Calendar",
-                "₹  Billing","💳 Payments","🧾 Expenses","📈 Reports","👥 Guests (CRM)"]
-    return PERMISSIONS.get(role, {}).get("pages", ["📊 Dashboard"])
+        return base
+    pages = PERMISSIONS.get(role, {}).get("pages", ["📊 Dashboard"])
+    return pages + ["🔔 Notifications"]
 
 def lock(action, message=None):
     """Show a lock message if user doesn't have permission. Returns True if blocked."""
@@ -350,6 +353,17 @@ with st.sidebar:
     page = st.radio("Navigate", allowed_pages(), label_visibility="collapsed")
     st.markdown("---")
 
+    # ── Notification bell with unread count ───────────────────────────────────
+    if DB.MODE == "online":
+        unread = DB.get_unread_count()
+        if unread > 0:
+            st.markdown(f"""
+            <div style='background:#dc2626;color:white;border-radius:8px;
+                        padding:6px 12px;text-align:center;font-weight:600;font-size:13px;
+                        margin-bottom:8px'>
+                🔔 {unread} unread notification{'s' if unread>1 else ''}
+            </div>""", unsafe_allow_html=True)
+
     # ── Auto-refresh every 60 seconds ────────────────────────────────────────
     import time
     now = time.time()
@@ -373,6 +387,17 @@ with st.sidebar:
         for key in ["logged_in", "username", "user_name", "user_role"]:
             st.session_state.pop(key, None)
         st.rerun()
+
+# ── Auto-generate smart alerts once per day ──────────────────────────────────
+if DB.MODE == "online":
+    last_alert_day = st.session_state.get("last_alert_day", "")
+    today_str      = str(date.today())
+    if last_alert_day != today_str:
+        try:
+            DB.generate_smart_alerts()
+            st.session_state.last_alert_day = today_str
+        except Exception:
+            pass
 
 # ── Offline warning banner ────────────────────────────────────────────────────
 if DB.MODE == "offline":
@@ -864,6 +889,11 @@ elif page == "📋 Bookings":
                                     "date": str(date.today()), "note": "Advance at booking",
                                 })
                             sync_room_statuses()
+                            if DB.MODE == "online":
+                                DB.create_notification(
+                                    f"📋 New booking: {guest} — Room(s) {', '.join(rnums)} | {checkin} → {checkout}",
+                                    "info", "booking", new_id
+                                )
                             msg = f"✅ Booking confirmed for **{guest}** — Room(s) {', '.join(rnums)} | {checkin} → {checkout}"
                             if extra_bed and extra_bed_count != "0 (None)": msg += f" | 🛏️ {extra_bed_count} Extra Bed(s)"
                             if bonfire_requested: msg += f" | 🔥 Bonfire: {fmt(bonfire_price)}/night"
@@ -2167,3 +2197,104 @@ elif page == "👥 Guests (CRM)":
                 agent_df = agent_df.sort_values("Bookings", ascending=False)
                 st.bar_chart(agent_df.set_index("Source"))
                 st.dataframe(agent_df, use_container_width=True, hide_index=True)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAGE: NOTIFICATIONS
+# ═══════════════════════════════════════════════════════════════════════════════
+elif page == "🔔 Notifications":
+    st.title("🔔 Notifications")
+
+    if DB.MODE == "offline":
+        st.warning("Notifications require an internet connection.")
+        st.stop()
+
+    # ── Action buttons ────────────────────────────────────────────────────────
+    col_a, col_b, col_c, _ = st.columns([1.5, 1.5, 1.5, 4])
+    if col_a.button("🔄 Generate Alerts", use_container_width=True):
+        DB.generate_smart_alerts()
+        st.success("✅ Alerts generated!")
+        st.rerun()
+    if col_b.button("✅ Mark All Read", use_container_width=True):
+        DB.mark_all_read()
+        st.rerun()
+    if col_c.button("🗑️ Clear All", use_container_width=True):
+        DB.clear_all_notifications()
+        st.success("All notifications cleared.")
+        st.rerun()
+
+    st.markdown("---")
+
+    # ── Smart summary banner ──────────────────────────────────────────────────
+    notifs = DB.get_notifications(limit=100)
+    unread = [n for n in notifs if not n.get("is_read")]
+    critical = [n for n in notifs if n.get("type") == "critical" and not n.get("is_read")]
+    warnings = [n for n in notifs if n.get("type") == "warning" and not n.get("is_read")]
+
+    if critical or warnings:
+        sm1, sm2, sm3 = st.columns(3)
+        sm1.metric("🔴 Critical", len(critical))
+        sm2.metric("🟡 Warnings", len(warnings))
+        sm3.metric("🔔 Total Unread", len(unread))
+        st.markdown("---")
+
+    if not notifs:
+        st.info("🎉 No notifications yet. Click 'Generate Alerts' to check today's status.")
+    else:
+        # ── Color & icon mapping ──────────────────────────────────────────────
+        TYPE_STYLE = {
+            "critical": ("#fee2e2", "#991b1b", "🔴"),
+            "warning":  ("#fef3c7", "#92400e", "🟡"),
+            "info":     ("#eff6ff", "#1e40af", "🔵"),
+        }
+        CAT_ICON = {
+            "checkin":      "🛎️",
+            "checkout":     "🚪",
+            "payment":      "💳",
+            "booking":      "📋",
+            "housekeeping": "🧹",
+            "general":      "📌",
+        }
+
+        # Unread first, then read
+        sorted_notifs = sorted(notifs, key=lambda n: (n.get("is_read", False), n.get("created_at","").__class__.__name__))
+        unread_notifs = [n for n in notifs if not n.get("is_read")]
+        read_notifs   = [n for n in notifs if n.get("is_read")]
+
+        def render_notif(n):
+            bg, tc, icon = TYPE_STYLE.get(n.get("type","info"), TYPE_STYLE["info"])
+            cat_icon = CAT_ICON.get(n.get("category","general"), "📌")
+            read_opacity = "opacity:0.55;" if n.get("is_read") else ""
+            ts = str(n.get("created_at",""))[:16]
+
+            nc1, nc2 = st.columns([9, 1])
+            with nc1:
+                st.markdown(f"""
+                <div style='background:{bg};border-left:4px solid {tc};border-radius:8px;
+                            padding:10px 14px;margin-bottom:6px;{read_opacity}'>
+                    <div style='font-size:14px;font-weight:{"600" if not n.get("is_read") else "400"};
+                                color:{tc}'>
+                        {cat_icon} {n.get("message","")}
+                    </div>
+                    <div style='font-size:11px;color:#888;margin-top:4px'>
+                        {icon} {n.get("type","info").title()} &nbsp;|&nbsp; 🕐 {ts}
+                        {"" if n.get("is_read") else " &nbsp;|&nbsp; <b>● Unread</b>"}
+                    </div>
+                </div>""", unsafe_allow_html=True)
+            with nc2:
+                if not n.get("is_read"):
+                    if st.button("✓", key=f"read_{n['id']}", help="Mark read"):
+                        DB.mark_notification_read(n["id"])
+                        st.rerun()
+                if st.button("✕", key=f"del_{n['id']}", help="Delete"):
+                    DB.delete_notification(n["id"])
+                    st.rerun()
+
+        if unread_notifs:
+            st.markdown(f"### 🔔 Unread ({len(unread_notifs)})")
+            for n in unread_notifs:
+                render_notif(n)
+
+        if read_notifs:
+            st.markdown(f"### ✅ Read ({len(read_notifs)})")
+            for n in read_notifs[:20]:
+                render_notif(n)
