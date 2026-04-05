@@ -458,72 +458,103 @@ if page == "📊 Dashboard":
     c5.metric("⏳ Pending Checkouts", pending)
 
     st.markdown("---")
-    col1, col2 = st.columns(2)
 
+    # ── Date picker (full width) ──────────────────────────────────────────────
+    dp1, dp2 = st.columns([2,4])
+    selected_date = dp1.date_input(
+        "📅 View any date",
+        value=date.today(),
+        help="Pick any date to see full room status, check-ins and check-outs"
+    )
+    today_date  = date.today()
+    is_today    = (selected_date == today_date)
+    sel_str     = str(selected_date)
+
+    # ── Helper: find booking details for a room on a date ────────────────────
+    def room_status_on_date(room_num, check_date):
+        check_str = str(check_date)
+        for b in bookings:
+            if b.get("status") == "checked-out":
+                continue
+            rooms_list = b.get("rooms", [b.get("room", "")])
+            if not isinstance(rooms_list, list):
+                rooms_list = [rooms_list]
+            if room_num not in rooms_list:
+                continue
+            try:
+                cin  = datetime.strptime(b["checkin"],  "%Y-%m-%d").date()
+                cout = datetime.strptime(b["checkout"], "%Y-%m-%d").date()
+                if cin <= check_date < cout:
+                    return "occupied", b
+            except:
+                pass
+        return None, None
+
+    # ── Pre-compute for selected date ─────────────────────────────────────────
+    checkins_sel  = [b for b in bookings
+                     if b.get("checkin")  == sel_str
+                     and b.get("status") not in ("checked-out",)]
+    checkouts_sel = [b for b in bookings
+                     if b.get("checkout") == sel_str
+                     and b.get("status") in ("checked-in","confirmed")]
+    overdue       = [b for b in bookings
+                     if b.get("checkout","") < str(today_date)
+                     and b.get("status") == "checked-in"]
+
+    # ── Smart banner ──────────────────────────────────────────────────────────
+    if is_today:
+        parts = []
+        if checkins_sel:  parts.append(f"🛎️ <b>{len(checkins_sel)} Check-in{'s' if len(checkins_sel)>1 else ''}</b>")
+        if checkouts_sel: parts.append(f"🚪 <b>{len(checkouts_sel)} Check-out{'s' if len(checkouts_sel)>1 else ''}</b>")
+        if overdue:       parts.append(f"⚠️ <b>{len(overdue)} Overdue</b>")
+        if parts:
+            st.markdown(
+                f"<div style='background:#fef3c7;border:1.5px solid #f59e0b;border-radius:10px;"
+                f"padding:10px 16px;font-size:14px;margin-bottom:12px'>"
+                f"{'  &nbsp;|&nbsp;  '.join(parts)} &nbsp; — action required today"
+                f"</div>", unsafe_allow_html=True)
+    else:
+        label = selected_date.strftime('%d %B %Y')
+        st.markdown(
+            f"<div style='background:#e0f2fe;border-left:4px solid #0284c7;"
+            f"padding:8px 14px;border-radius:6px;font-size:13px;margin-bottom:12px'>"
+            f"📅 Showing status for <b>{label}</b></div>",
+            unsafe_allow_html=True)
+
+    col1, col2 = st.columns([3, 2])
+
+    # ── COL 1: Room grid ──────────────────────────────────────────────────────
     with col1:
-        st.subheader("Room Status")
-
-        # ── Date picker ───────────────────────────────────────────────────────
-        selected_date = st.date_input(
-            "📅 Select a date to check room status",
-            value=date.today(),
-            help="Pick any date to see which rooms are occupied or available on that day"
-        )
-
-        today_date = date.today()
-        is_today   = (selected_date == today_date)
-
-        # Label above the room grid
-        if is_today:
-            st.markdown(
-                "<div style='background:#f3eeff;border-left:4px solid #7c3aed;"
-                "padding:8px 12px;border-radius:6px;font-size:13px;margin-bottom:10px'>"
-                "🟣 <b>Today — Live Status</b></div>",
-                unsafe_allow_html=True
-            )
-        else:
-            st.markdown(
-                f"<div style='background:#e0f2fe;border-left:4px solid #0284c7;"
-                f"padding:8px 12px;border-radius:6px;font-size:13px;margin-bottom:10px'>"
-                f"📅 <b>Showing status for {selected_date.strftime('%d %B %Y')}</b></div>",
-                unsafe_allow_html=True
-            )
-
-        # ── Helper: find booking status for a room on a given date ────────────
-        def room_status_on_date(room_num, check_date):
-            for b in bookings:
-                if b.get("status") == "checked-out":
-                    continue
-                rooms_list = b.get("rooms", [b.get("room", "")])
-                if not isinstance(rooms_list, list):
-                    rooms_list = [rooms_list]
-                if room_num not in rooms_list:
-                    continue
-                try:
-                    cin  = datetime.strptime(b["checkin"],  "%Y-%m-%d").date()
-                    cout = datetime.strptime(b["checkout"], "%Y-%m-%d").date()
-                    if cin <= check_date < cout:
-                        return "occupied", b.get("guest", "Guest")
-                except:
-                    pass
-            return None, None
-
-        # ── Room grid ─────────────────────────────────────────────────────────
+        st.subheader("🛏️ Room Status")
         cols = st.columns(3)
         for i, r in enumerate(rooms):
+            bk_status, bk = room_status_on_date(r["num"], selected_date)
+
+            # Determine special labels for selected date
+            is_checkin_day  = bk and bk.get("checkin")  == sel_str
+            is_checkout_day = bk and bk.get("checkout") == sel_str
+
             if is_today:
                 status = r["status"]
-                _, g   = room_status_on_date(r["num"], selected_date)
-                guest  = g or ""
             else:
-                bk_status, guest = room_status_on_date(r["num"], selected_date)
                 status = bk_status if bk_status else "available"
-                guest  = guest or ""
 
-            color = {"occupied":"#f8d7da","available":"#d4edda","cleaning":"#fff3cd"}.get(status,"#eee")
-            icon  = {"occupied":"🔴","available":"🟢","cleaning":"🟡"}.get(status,"⚪")
+            guest = bk.get("guest","") if bk else ""
+
+            # Color and icon — override for check-in/checkout days
+            if is_checkin_day and sel_str == bk.get("checkin"):
+                color, icon, label = "#d1fae5", "🛎️", "Check-in"
+            elif is_checkout_day and sel_str == bk.get("checkout"):
+                color, icon, label = "#fee2e2", "🚪", "Check-out"
+            elif status == "occupied":
+                color, icon, label = "#f8d7da", "🔴", "Occupied"
+            elif status == "cleaning":
+                color, icon, label = "#fff3cd", "🟡", "Cleaning"
+            else:
+                color, icon, label = "#d4edda", "🟢", "Available"
+
             guest_line = (
-                f"<div style='font-size:11px;color:#666;margin-top:3px;"
+                f"<div style='font-size:10px;color:#555;margin-top:2px;"
                 f"white-space:nowrap;overflow:hidden;text-overflow:ellipsis'>{guest}</div>"
                 if guest else ""
             )
@@ -531,81 +562,92 @@ if page == "📊 Dashboard":
                 st.markdown(f"""
                 <div style="background:{color};border-radius:8px;padding:10px;
                             text-align:center;margin-bottom:8px;
-                            border:1px solid rgba(0,0,0,0.06)">
-                  <div style="font-size:20px;font-weight:700;color:#1a1a1a">{r['num']}</div>
-                  <div style="font-size:11px;color:#666">{r['type']} · {r['ac']}</div>
-                  <div style="font-size:12px;margin-top:4px">{icon} {status}</div>
+                            border:1px solid rgba(0,0,0,0.07)">
+                  <div style="font-size:18px;font-weight:700">{r['num']}</div>
+                  <div style="font-size:10px;color:#666">{r['type']} · {r['ac']}</div>
+                  <div style="font-size:11px;margin-top:3px">{icon} {label}</div>
                   {guest_line}
                 </div>""", unsafe_allow_html=True)
 
-        # ── Summary bar ───────────────────────────────────────────────────────
+        # Summary bar
         occ_d   = sum(1 for r in rooms if room_status_on_date(r["num"], selected_date)[0] == "occupied")
+        cin_d   = len(checkins_sel)
+        cout_d  = len(checkouts_sel)
         avail_d = len(rooms) - occ_d
         st.markdown(
             f"<div style='background:#f3eeff;border-radius:8px;padding:10px 14px;"
-            f"margin-top:6px;font-size:13px;display:flex;gap:16px'>"
-            f"🔴 <b>{occ_d} Occupied</b> &nbsp;&nbsp; 🟢 <b>{avail_d} Available</b>"
-            f"</div>", unsafe_allow_html=True
-        )
+            f"margin-top:4px;font-size:12px;display:flex;gap:12px;flex-wrap:wrap'>"
+            f"🔴 <b>{occ_d} Occupied</b> &nbsp;"
+            f"🟢 <b>{avail_d} Available</b> &nbsp;"
+            f"🛎️ <b>{cin_d} Check-ins</b> &nbsp;"
+            f"🚪 <b>{cout_d} Check-outs</b>"
+            f"</div>", unsafe_allow_html=True)
 
+    # ── COL 2: Today's activity list ──────────────────────────────────────────
     with col2:
-        st.subheader("📅 Today's Activity")
-        today_str = str(date.today())
+        st.subheader("📋 Activity")
 
-        checkins_today  = [b for b in bookings
-                           if b.get("checkin")  == today_str
-                           and b.get("status") != "checked-out"]
-        checkouts_today = [b for b in bookings
-                           if b.get("checkout") == today_str
-                           and b.get("status") in ("checked-in", "confirmed")]
-        overdue         = [b for b in bookings
-                           if b.get("checkout","") < today_str
-                           and b.get("status") == "checked-in"]
-
-        if not checkins_today and not checkouts_today and not overdue:
-            st.info("No check-ins or check-outs today.")
+        # ── Check-ins ─────────────────────────────────────────────────────────
+        if checkins_sel:
+            st.markdown(f"**🛎️ Check-ins ({len(checkins_sel)})**")
+            for b in checkins_sel:
+                rms = b.get("room","?")
+                st.markdown(f"""
+                <div style='background:#d1fae5;border-radius:8px;padding:8px 12px;
+                            margin-bottom:5px;border-left:4px solid #059669'>
+                    <b>Room {rms}</b> — {b['guest']}<br>
+                    <span style='font-size:11px;color:#065f46'>
+                        📞 {b.get('phone','—')} &nbsp;|&nbsp;
+                        {b.get('agent','Direct') or 'Direct'}
+                    </span>
+                </div>""", unsafe_allow_html=True)
         else:
-            # ── Check-ins today ───────────────────────────────────────────────
-            if checkins_today:
-                st.markdown("**🟢 Check-ins Today**")
-                for b in checkins_today:
-                    rms = ", ".join(b.get("rooms", [b.get("room","")])) if isinstance(b.get("rooms"), list) else b.get("room","")
-                    st.markdown(f"""
-                    <div style='background:#d1fae5;border-radius:8px;padding:8px 12px;
-                                margin-bottom:6px;border-left:4px solid #059669'>
-                        <b>Room {rms}</b> — {b["guest"]}
-                        <span style='float:right;font-size:12px;color:#065f46'>
-                            🛎️ Arriving today
-                        </span>
-                    </div>""", unsafe_allow_html=True)
+            st.markdown("**🛎️ Check-ins**")
+            st.caption("None today")
 
-            # ── Check-outs today ──────────────────────────────────────────────
-            if checkouts_today:
-                st.markdown("**🔴 Check-outs Today**")
-                for b in checkouts_today:
-                    rms = ", ".join(b.get("rooms", [b.get("room","")])) if isinstance(b.get("rooms"), list) else b.get("room","")
-                    st.markdown(f"""
-                    <div style='background:#fee2e2;border-radius:8px;padding:8px 12px;
-                                margin-bottom:6px;border-left:4px solid #dc2626'>
-                        <b>Room {rms}</b> — {b["guest"]}
-                        <span style='float:right;font-size:12px;color:#991b1b'>
-                            🚪 Departing today
-                        </span>
-                    </div>""", unsafe_allow_html=True)
+        st.markdown("")
 
-            # ── Overdue checkouts ─────────────────────────────────────────────
-            if overdue:
-                st.markdown("**⚠️ Overdue Checkouts**")
-                for b in overdue:
-                    rms = ", ".join(b.get("rooms", [b.get("room","")])) if isinstance(b.get("rooms"), list) else b.get("room","")
-                    st.markdown(f"""
-                    <div style='background:#fef3c7;border-radius:8px;padding:8px 12px;
-                                margin-bottom:6px;border-left:4px solid #f59e0b'>
-                        <b>Room {rms}</b> — {b["guest"]}
-                        <span style='float:right;font-size:12px;color:#92400e'>
-                            ⚠️ Was due {b["checkout"]}
-                        </span>
-                    </div>""", unsafe_allow_html=True)
+        # ── Check-outs ────────────────────────────────────────────────────────
+        if checkouts_sel:
+            st.markdown(f"**🚪 Check-outs ({len(checkouts_sel)})**")
+            for b in checkouts_sel:
+                rms = b.get("room","?")
+                # Check if payment is pending
+                paid = sum(p.get("amount",0) for p in st.session_state.payments
+                           if p.get("booking_id") == b.get("id")
+                           and p.get("type") != "refund")
+                has_bill = any(bl.get("booking_id") == b.get("id")
+                               for bl in st.session_state.bills)
+                pay_tag = ""
+                if not has_bill:
+                    pay_tag = "<span style='color:#dc2626;font-size:10px'>⚠️ No bill yet</span>"
+                st.markdown(f"""
+                <div style='background:#fee2e2;border-radius:8px;padding:8px 12px;
+                            margin-bottom:5px;border-left:4px solid #dc2626'>
+                    <b>Room {rms}</b> — {b['guest']}<br>
+                    <span style='font-size:11px;color:#991b1b'>
+                        📅 Checked in: {b.get('checkin','?')} &nbsp; {pay_tag}
+                    </span>
+                </div>""", unsafe_allow_html=True)
+        else:
+            st.markdown("**🚪 Check-outs**")
+            st.caption("None today" if is_today else "None this day")
+
+        st.markdown("")
+
+        # ── Overdue (only show on today view) ─────────────────────────────────
+        if is_today and overdue:
+            st.markdown(f"**⚠️ Overdue Checkouts ({len(overdue)})**")
+            for b in overdue:
+                rms = b.get("room","?")
+                st.markdown(f"""
+                <div style='background:#fef3c7;border-radius:8px;padding:8px 12px;
+                            margin-bottom:5px;border-left:4px solid #f59e0b'>
+                    <b>Room {rms}</b> — {b['guest']}<br>
+                    <span style='font-size:11px;color:#92400e'>
+                        Was due: {b.get('checkout','?')}
+                    </span>
+                </div>""", unsafe_allow_html=True)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PAGE: ROOMS
@@ -719,89 +761,114 @@ elif page == "📋 Bookings":
 
     with tab1:
         bookings = st.session_state.bookings
-        col1, col2 = st.columns([2, 1])
-        search        = col1.text_input("🔍 Search by guest name", placeholder="Type name...")
-        status_filter = col2.selectbox("Filter by status", ["All", "checked-in", "confirmed", "checked-out"])
+        today_str = str(date.today())
 
-        filtered = [b for b in bookings
-                    if (not search or search.lower() in b["guest"].lower())
-                    and (status_filter == "All" or b["status"] == status_filter)]
+        # ── Split into logical groups ─────────────────────────────────────────
+        today_checkins  = sorted([b for b in bookings if b.get("checkin")  == today_str
+                                   and b.get("status") in ("confirmed","checked-in")],
+                                  key=lambda x: x.get("room",""))
+        today_checkouts = sorted([b for b in bookings if b.get("checkout") == today_str
+                                   and b.get("status") == "checked-in"],
+                                  key=lambda x: x.get("room",""))
+        overdue         = sorted([b for b in bookings if b.get("checkout","") < today_str
+                                   and b.get("status") == "checked-in"],
+                                  key=lambda x: x.get("checkout",""))
+        active_stays    = sorted([b for b in bookings if b.get("status") == "checked-in"
+                                   and b.get("checkout","") >= today_str
+                                   and b.get("checkin","") < today_str],
+                                  key=lambda x: x.get("checkout",""))
+        upcoming        = sorted([b for b in bookings if b.get("status") == "confirmed"
+                                   and b.get("checkin","") > today_str],
+                                  key=lambda x: x.get("checkin",""))
+        past_bookings   = sorted([b for b in bookings if b.get("status") == "checked-out"],
+                                  key=lambda x: x.get("checkout",""), reverse=True)
 
-        if not filtered:
-            st.info("No bookings found.")
-        else:
-            # ── Column headers ──────────────────────────────────────────────
-            h0,h1,h2,h3,h4,h5,h6,h7,h8 = st.columns([2.2,0.8,1.2,1.2,0.8,1.5,1,1.4,1.8])
-            h0.markdown("**Guest**")
-            h1.markdown("**Room**")
-            h2.markdown("**Check-in**")
-            h3.markdown("**Check-out**")
-            h4.markdown("**Nights**")
-            h5.markdown("**Agent**")
-            h6.markdown("**Extras**")
-            h7.markdown("**Total**")
-            h8.markdown("**Action**")
-            st.markdown("<hr style='margin:2px 0 6px 0; border-color:#d8b4fe'>", unsafe_allow_html=True)
+        # ── Summary banner ────────────────────────────────────────────────────
+        if today_checkins or today_checkouts or overdue:
+            parts = []
+            if overdue:         parts.append(f"🔴 {len(overdue)} overdue checkout{'s' if len(overdue)>1 else ''}")
+            if today_checkouts: parts.append(f"🚪 {len(today_checkouts)} checking out today")
+            if today_checkins:  parts.append(f"🛎️ {len(today_checkins)} checking in today")
+            st.warning("  |  ".join(parts))
 
-            for b in reversed(filtered):
-                n           = nights(b["checkin"], b["checkout"])
-                r           = get_room(b["room"])
-                room_charge = r["price"] * n if r else 0
-                extra_bed   = 0  # Charged at billing time
-                total       = room_charge
-                status_icon = {"checked-in": "🟢", "confirmed": "🔵", "checked-out": "⚫"}.get(b["status"], "⚪")
-                extras_str  = " ".join(filter(None, [
-                    "🛏️" if b.get("extra_bed") else "",
-                    "🔥" if b.get("bonfire") else "",
-                ])) or "—"
+        # ── Helper: render one booking card ──────────────────────────────────
+        def booking_card(b, show_checkin_btn=False, show_checkout_btn=False, border_color="#d8b4fe", bg_color="#faf5ff"):
+            n   = nights(b["checkin"], b["checkout"])
+            rms = b.get("room","—")
+            extras = []
+            if b.get("extra_bed"): extras.append("🛏️")
+            if b.get("bonfire"):   extras.append("🔥")
+            if b.get("meal_plan","") not in ("","No Meals (Room Only)"): extras.append("🍽️")
+            ext_str = " ".join(extras) or ""
 
-                c0,c1,c2,c3,c4,c5,c6,c7,c8 = st.columns([2.2,0.8,1.2,1.2,0.8,1.5,1,1.4,1.8])
-                c0.write(f"{status_icon} **{b['guest']}**")
-                c1.write(b["room"])
+            with st.container():
+                c0,c1,c2,c3,c4,c5 = st.columns([2.5,1,1.5,1.5,0.8,2.5])
+                c0.markdown(f"**{b['guest']}**")
+                c1.write(f"Rm {rms}")
                 c2.write(b["checkin"])
                 c3.write(b["checkout"])
-                c4.write(str(n))
-                c5.write(b.get("agent") or "—")
-                c6.write(extras_str)
-                c7.write(fmt(total))
-                with c8:
-                    a1, a2 = st.columns(2)
-                    if b["status"] == "checked-in" and can("checkout_guest"):
-                        if a1.button("✅ Out", key=f"co_{b['id']}", help="Checkout"):
+                c4.write(f"{n}N")
+                with c5:
+                    btns = st.columns(3 if (show_checkin_btn or show_checkout_btn) else 2)
+                    btn_idx = 0
+
+                    if show_checkin_btn and can("add_booking"):
+                        if btns[btn_idx].button("✅ Check In", key=f"ci_{b['id']}",
+                                                 use_container_width=True):
                             require_online()
+                            DB.update_booking(b["id"], {"status": "checked-in"})
+                            for rn in b.get("rooms", [b.get("room","")]):
+                                DB.update_room_status(rn.strip(), "occupied")
+                            if DB.MODE == "online":
+                                DB.create_notification(
+                                    f"🛎️ {b['guest']} checked in — Room {rms}",
+                                    "info", "checkin", b["id"]
+                                )
+                            invalidate_cache()
+                            st.rerun()
+                        btn_idx += 1
+
+                    if show_checkout_btn and can("checkout_guest"):
+                        if btns[btn_idx].button("🚪 Check Out", key=f"co_{b['id']}",
+                                                  use_container_width=True):
                             require_online()
                             DB.update_booking(b["id"], {"status": "checked-out"})
-                            DB.update_room(b["room"].split(",")[0].strip(), {"status": "cleaning"})
+                            for rn in b.get("rooms", [b.get("room","")]):
+                                DB.update_room_status(rn.strip(), "cleaning")
+                            if DB.MODE == "online":
+                                DB.create_notification(
+                                    f"🚪 {b['guest']} checked out — Room {rms}",
+                                    "info", "checkout", b["id"]
+                                )
+                            invalidate_cache()
                             st.rerun()
-                    if can("delete_booking") and a2.button("🗑️", key=f"db_{b['id']}", help="Delete"):
-                        require_online()
-                        DB.delete_booking(b["id"])
-                        st.rerun()
+                        btn_idx += 1
 
-                # collapsible extra details
-                with st.expander("📋 More details"):
-                    d1, d2, d3 = st.columns(3)
-                    d1.write(f"📞 **Phone:** {b['phone']}")
-                    d1.write(f"🌄 **Season:** {b.get('season', '—')}")
-                    d1.write(f"🏢 **Agent:** {b.get('agent') or '—'}")
-                    d1.write(f"🍽️ **Meal Plan:** {b.get('meal_plan', 'No Meals')}")
-                    eb_txt = f"Yes × {b.get('extra_bed_count', 1)} bed(s) @ {fmt(b.get('extra_bed_price',0))}/night" if b.get('extra_bed') else 'No'
-                    d2.write(f"🛏️ **Extra Bed:** {eb_txt}")
-                    d2.write(f"🔥 **Bonfire:** {'Yes @ ' + fmt(b.get('bonfire_price',0)) + '/night' if b.get('bonfire') else 'No'}")
-                    adv = b.get('advance_paid', 0)
-                    d2.write(f"💳 **Advance:** {fmt(adv) + ' (' + b.get('advance_method','Cash') + ')' if adv else 'None'}")
-                    rooms_list = b.get('rooms', [b.get('room','—')])
-                    if isinstance(rooms_list, list) and len(rooms_list) > 1:
-                        d3.write(f"🛏️ **All Rooms:** {', '.join(rooms_list)}")
-                    d3.write(f"📝 **Notes:** {b.get('notes') or '—'}")
-                    if st.button("✏️ Edit This Booking", key=f"edit_b_{b['id']}"):
+                    if btns[btn_idx].button("✏️", key=f"edit_btn_{b['id']}", help="Edit"):
                         st.session_state["edit_booking"] = b["id"]
                         st.rerun()
 
-                # ── Inline edit form ──────────────────────────────────────────
+                    if can("delete_booking") and len(btns) > btn_idx+1:
+                        if btns[btn_idx+1].button("🗑️", key=f"del_{b['id']}", help="Delete"):
+                            require_online()
+                            DB.delete_booking(b["id"])
+                            invalidate_cache()
+                            st.rerun()
+
+                if ext_str or b.get("agent"):
+                    st.caption(f"  {ext_str}  {'🏢 '+b['agent'] if b.get('agent') else ''}  {'📞 '+b['phone'] if b.get('phone') else ''}")
+
+                with st.expander("📋 Details & Edit"):
+                    d1, d2 = st.columns(2)
+                    d1.write(f"📞 {b.get('phone','—')} | 🏢 {b.get('agent','Direct') or 'Direct'}")
+                    d1.write(f"🍽️ {b.get('meal_plan','No Meals')}")
+                    adv = b.get('advance_paid', 0)
+                    d2.write(f"💳 Advance: {fmt(adv)} via {b.get('advance_method','—')}" if adv else "💳 No advance")
+                    d2.write(f"📝 {b.get('notes','—') or '—'}")
+
                 if st.session_state.get("edit_booking") == b["id"]:
                     with st.form(f"edit_booking_{b['id']}"):
-                        st.markdown(f"**✏️ Editing Booking — {b['guest']}**")
+                        st.markdown(f"**✏️ Editing — {b['guest']}**")
                         be1, be2 = st.columns(2)
                         new_guest  = be1.text_input("Guest Name", value=b["guest"])
                         new_phone  = be2.text_input("Phone", value=b.get("phone",""))
@@ -829,9 +896,10 @@ elif page == "📋 Bookings":
                                    b.get("meal_plan","No Meals (Room Only)")))
                         new_notes  = st.text_area("Notes", value=b.get("notes",""), height=60)
                         sv, cn = st.columns(2)
-                        do_save   = sv.form_submit_button("💾 Save Changes", use_container_width=True)
-                        do_cancel = cn.form_submit_button("✖ Cancel",        use_container_width=True)
+                        do_save   = sv.form_submit_button("💾 Save", use_container_width=True)
+                        do_cancel = cn.form_submit_button("✖ Cancel", use_container_width=True)
                         if do_save:
+                            require_online()
                             DB.update_booking(b["id"], {
                                 "guest": new_guest, "phone": new_phone,
                                 "checkin": str(new_checkin), "checkout": str(new_checkout),
@@ -844,14 +912,104 @@ elif page == "📋 Bookings":
                             if new_status == "checked-out":
                                 for rn in b.get("rooms", [b.get("room","")]):
                                     DB.update_room(rn.strip(), {"status": "cleaning"})
+                            invalidate_cache()
                             st.session_state.pop("edit_booking", None)
-                            st.success(f"✅ Booking for {new_guest} updated!")
+                            st.success(f"✅ Updated!")
                             st.rerun()
                         if do_cancel:
                             st.session_state.pop("edit_booking", None)
                             st.rerun()
+                st.markdown(f"<hr style='margin:3px 0;border-color:{border_color}'>",
+                            unsafe_allow_html=True)
 
-                st.markdown("<hr style='margin:4px 0; border-color:#f0e6ff'>", unsafe_allow_html=True)
+        # ══════════════════════════════════════════════════════════════════════
+        # SECTION 1 — OVERDUE (most urgent)
+        # ══════════════════════════════════════════════════════════════════════
+        if overdue:
+            st.markdown("""
+            <div style='background:#fee2e2;border:1.5px solid #dc2626;border-radius:10px;
+                        padding:8px 16px;margin-bottom:8px'>
+                <span style='color:#991b1b;font-weight:700;font-size:15px'>
+                    🔴 Overdue Checkouts — Immediate Action Needed
+                </span>
+            </div>""", unsafe_allow_html=True)
+            for b in overdue:
+                booking_card(b, show_checkout_btn=True, border_color="#fca5a5", bg_color="#fff5f5")
+
+        # ══════════════════════════════════════════════════════════════════════
+        # SECTION 2 — TODAY'S CHECK-OUTS
+        # ══════════════════════════════════════════════════════════════════════
+        if today_checkouts:
+            st.markdown("""
+            <div style='background:#fef3c7;border:1.5px solid #f59e0b;border-radius:10px;
+                        padding:8px 16px;margin-bottom:8px;margin-top:12px'>
+                <span style='color:#92400e;font-weight:700;font-size:15px'>
+                    🚪 Checking Out Today
+                </span>
+            </div>""", unsafe_allow_html=True)
+            for b in today_checkouts:
+                booking_card(b, show_checkout_btn=True, border_color="#fcd34d", bg_color="#fffbeb")
+
+        # ══════════════════════════════════════════════════════════════════════
+        # SECTION 3 — TODAY'S CHECK-INS
+        # ══════════════════════════════════════════════════════════════════════
+        if today_checkins:
+            st.markdown("""
+            <div style='background:#d1fae5;border:1.5px solid #059669;border-radius:10px;
+                        padding:8px 16px;margin-bottom:8px;margin-top:12px'>
+                <span style='color:#065f46;font-weight:700;font-size:15px'>
+                    🛎️ Checking In Today
+                </span>
+            </div>""", unsafe_allow_html=True)
+            for b in today_checkins:
+                booking_card(b, show_checkin_btn=True, border_color="#6ee7b7", bg_color="#f0fdf4")
+
+        # ══════════════════════════════════════════════════════════════════════
+        # SECTION 4 — ACTIVE STAYS (currently in-house)
+        # ══════════════════════════════════════════════════════════════════════
+        if active_stays:
+            st.markdown(f"""
+            <div style='background:#eff6ff;border:1.5px solid #3b82f6;border-radius:10px;
+                        padding:8px 16px;margin-bottom:8px;margin-top:12px'>
+                <span style='color:#1e40af;font-weight:700;font-size:15px'>
+                    🏨 Currently In-House ({len(active_stays)})
+                </span>
+            </div>""", unsafe_allow_html=True)
+            for b in active_stays:
+                booking_card(b, show_checkout_btn=True, border_color="#bfdbfe", bg_color="#eff6ff")
+
+        # ══════════════════════════════════════════════════════════════════════
+        # SECTION 5 — UPCOMING CONFIRMED
+        # ══════════════════════════════════════════════════════════════════════
+        if upcoming:
+            st.markdown(f"""
+            <div style='background:#f5f3ff;border:1.5px solid #8b5cf6;border-radius:10px;
+                        padding:8px 16px;margin-bottom:8px;margin-top:12px'>
+                <span style='color:#5b21b6;font-weight:700;font-size:15px'>
+                    📅 Upcoming Confirmed ({len(upcoming)})
+                </span>
+            </div>""", unsafe_allow_html=True)
+            for b in upcoming[:10]:
+                booking_card(b, show_checkin_btn=False, border_color="#ddd6fe", bg_color="#f5f3ff")
+            if len(upcoming) > 10:
+                st.caption(f"... and {len(upcoming)-10} more upcoming bookings")
+
+        if not any([overdue, today_checkins, today_checkouts, active_stays, upcoming]):
+            st.info("No active bookings.")
+
+        # ══════════════════════════════════════════════════════════════════════
+        # SECTION 6 — PAST BOOKINGS (hidden by default)
+        # ══════════════════════════════════════════════════════════════════════
+        st.markdown("---")
+        show_history = st.checkbox(f"📜 Show Past Bookings ({len(past_bookings)} records)")
+        if show_history:
+            search_past = st.text_input("🔍 Search past bookings", placeholder="Guest name...")
+            filtered_past = [b for b in past_bookings
+                             if not search_past or search_past.lower() in b["guest"].lower()]
+            for b in filtered_past[:30]:
+                booking_card(b, border_color="#e5e7eb", bg_color="#f9fafb")
+            if len(filtered_past) > 30:
+                st.caption(f"Showing 30 of {len(filtered_past)} past bookings")
 
     with tab2:
         st.subheader("New Booking")
@@ -903,10 +1061,45 @@ elif page == "📋 Bookings":
                 advance_method = dp.selectbox("Payment Method", ["Cash", "UPI", "Bank Transfer", "Card", "Online"])
 
                 st.markdown("---")
-                bf1, bf2 = st.columns(2)
-                bonfire_requested = bf1.checkbox("🔥 Bonfire Requested?")
-                bonfire_price     = bf2.number_input("Bonfire Charge (₹/night)", min_value=0, value=800, step=50) if bonfire_requested else 0
+                st.markdown("**🔥 Bonfire**")
+                bonfire_price = st.number_input(
+                    "Bonfire Charge (₹/night) — leave 0 if not required",
+                    min_value=0, value=0, step=50
+                )
+                bonfire_requested = bonfire_price > 0
+
                 notes     = st.text_area("Notes / Special Requests", height=80)
+
+                # ── Estimated Cost Preview ────────────────────────────────────
+                st.markdown("---")
+                st.markdown("**💰 Estimated Cost**")
+                try:
+                    n_nights    = max(1, (checkout - checkin).days)
+                    est_room    = room_price_per_night * n_nights
+                    est_eb      = (extra_bed_price * (int(extra_bed_count) if extra_bed and extra_bed_count != "0 (None)" else 0) * n_nights) if extra_bed else 0
+                    est_meal    = meal_price * n_nights
+                    est_bonfire = bonfire_price * n_nights
+                    est_total   = est_room + est_eb + est_meal + est_bonfire
+
+                    ec1, ec2, ec3, ec4, ec5 = st.columns(5)
+                    ec1.metric("🛏️ Room", fmt(est_room),
+                               f"{n_nights} night{'s' if n_nights>1 else ''}")
+                    ec2.metric("🛏️ Extra Bed", fmt(est_eb) if est_eb else "—")
+                    ec3.metric("🍽️ Meals", fmt(est_meal) if est_meal else "—")
+                    ec4.metric("🔥 Bonfire", fmt(est_bonfire) if est_bonfire else "—")
+                    ec5.metric("💰 Total Est.", fmt(est_total))
+
+                    if advance_paid > 0:
+                        st.markdown(
+                            f"<div style='background:#eff6ff;border-radius:8px;padding:10px 14px;"
+                            f"font-size:13px;margin-top:4px'>"
+                            f"💳 After advance of <b>{fmt(advance_paid)}</b>: "
+                            f"Balance due = <b>{fmt(max(0, est_total - advance_paid))}</b>"
+                            f"</div>", unsafe_allow_html=True
+                        )
+                except Exception:
+                    st.caption("Fill in dates and prices above to see estimate.")
+
                 submitted = st.form_submit_button("✅ Confirm Booking", use_container_width=True)
                 if submitted:
                     if not guest:
@@ -957,12 +1150,20 @@ elif page == "📋 Bookings":
                                     f"📋 New booking: {guest} — Room(s) {', '.join(rnums)} | {checkin} → {checkout}",
                                     "info", "booking", new_id
                                 )
+                            # ── Success with cost summary ─────────────────────
+                            n_nights_final = max(1, (checkout - checkin).days)
+                            est_final = (room_price_per_night * n_nights_final +
+                                         (extra_bed_price * (int(extra_bed_count) if extra_bed and extra_bed_count != "0 (None)" else 0) * n_nights_final if extra_bed else 0) +
+                                         meal_price * n_nights_final +
+                                         bonfire_price * n_nights_final)
                             msg = f"✅ Booking confirmed for **{guest}** — Room(s) {', '.join(rnums)} | {checkin} → {checkout}"
                             if extra_bed and extra_bed_count != "0 (None)": msg += f" | 🛏️ {extra_bed_count} Extra Bed(s)"
                             if bonfire_requested: msg += f" | 🔥 Bonfire: {fmt(bonfire_price)}/night"
                             if meal_plan != "No Meals (Room Only)": msg += f" | 🍽️ {meal_plan.split('(')[0].strip()}"
-                            if advance_paid > 0:  msg += f" | 💳 Advance: Rs.{advance_paid:,} ({advance_method})"
+                            if advance_paid > 0:  msg += f" | 💳 Advance: {fmt(advance_paid)}"
+                            msg += f" | 💰 Est. Total: {fmt(est_final)}"
                             st.success(msg)
+                            invalidate_cache()
                             st.rerun()
 
     # ═══════════════════════════════════════════════════════════════════════════
