@@ -665,3 +665,26 @@ def generate_smart_alerts():
             f"💳 {len(pending_bills)} pending payment{'s' if len(pending_bills)>1 else ''} — bills not yet settled",
             "warning", "payment"
         )
+
+def next_bill_id():
+    """Generate next bill ID like BILL-001, BILL-002 etc."""
+    if MODE == "offline":
+        bills = _jload(BILLS_FILE, [])
+        if not bills:
+            return "BILL-001"
+        nums = []
+        for b in bills:
+            try:
+                nums.append(int(b["bill_id"].split("-")[1]))
+            except:
+                pass
+        next_num = max(nums, default=0) + 1
+        return f"BILL-{next_num:03d}"
+    row = _run("SELECT bill_id FROM bills ORDER BY bill_id DESC LIMIT 1", fetch="one")
+    if not row:
+        return "BILL-001"
+    try:
+        last_num = int(row["bill_id"].split("-")[1])
+        return f"BILL-{last_num+1:03d}"
+    except:
+        return "BILL-001"
