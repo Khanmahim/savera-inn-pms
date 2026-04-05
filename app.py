@@ -1527,26 +1527,29 @@ elif page == "₹  Billing":
                     meal_label   = b_data.get("meal_plan","No Meals")
 
                     # ── STEP 3: Summary card ──────────────────────────────────
-                    rooms_str = ", ".join([f"Room {r}" for r in all_rooms])
+                    rooms_str  = ", ".join([f"Room {r}" for r in all_rooms])
+                    agent_line = f" &nbsp;|&nbsp; 🏢 {b_data.get('agent','')}" if b_data.get("agent","") and b_data.get("agent") != selected_name else ""
+                    eb_line    = f"&nbsp;&nbsp; 🛏️ Extra Bed: {fmt(extra_charge)}" if extra_charge else ""
+                    meal_line  = f"&nbsp;&nbsp; 🍽️ Meals: {fmt(meal_default)}"   if meal_default  else ""
+                    bf_line    = f"&nbsp;&nbsp; 🔥 Bonfire: {fmt(bonfire_def)}"  if bonfire_def   else ""
+                    adv_line   = f"&nbsp;&nbsp; 💳 Advance: {fmt(adv_paid)}"    if adv_paid      else ""
+
                     st.markdown(f"""
-                    <div style='background:#f3eeff;border-radius:10px;padding:14px 18px;
+                    <div style='background:#f3eeff;border-radius:10px;padding:16px 20px;
                                 border-left:4px solid #7c3aed;margin:10px 0'>
-                        <div style='font-size:15px;font-weight:700;color:#3b1f6e;margin-bottom:6px'>
+                        <div style='font-size:15px;font-weight:700;color:#3b1f6e;margin-bottom:8px'>
                             📋 Billing Summary
                         </div>
                         <div style='font-size:13px;color:#5b21b6;line-height:2'>
                             👤 <b>{selected_name}</b> &nbsp;|&nbsp;
                             📅 {cin_sel} → {cout_sel} &nbsp;|&nbsp;
-                            🌙 <b>{n_nights} nights</b><br>
+                            🌙 <b>{n_nights} nights</b>
+                            {agent_line}<br>
                             🛏️ <b>{rooms_str}</b>
-                            {f"&nbsp;|&nbsp; 🏢 Agent: {b_data.get('agent','')}" if b_data.get("agent") and b_data.get("agent") != selected_name else ""}
                         </div>
-                        <div style='font-size:12px;color:#7c3aed;margin-top:8px'>
-                            🛏️ {fmt(room_price)}/night × {n_nights} = <b>{fmt(room_charge)}</b>
-                            {"&nbsp;&nbsp; 🛏️ Extra Bed: " + fmt(extra_charge) if extra_charge else ""}
-                            {"&nbsp;&nbsp; 🍽️ Meals: " + fmt(meal_default) if meal_default else ""}
-                            {"&nbsp;&nbsp; 🔥 Bonfire: " + fmt(bonfire_def) if bonfire_def else ""}
-                            {"&nbsp;&nbsp; 💳 Advance: " + fmt(adv_paid) if adv_paid else ""}
+                        <div style='font-size:12px;color:#7c3aed;margin-top:8px;line-height:2'>
+                            🏨 {fmt(room_price)}/night × {n_nights} nights = <b>{fmt(room_charge)}</b>
+                            {eb_line}{meal_line}{bf_line}{adv_line}
                         </div>
                     </div>""", unsafe_allow_html=True)
 
